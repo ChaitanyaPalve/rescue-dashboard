@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import 'tailwindcss';
+
+@keyframes dash-flow {
+  from { stroke-dashoffset: 40; }
+  to   { stroke-dashoffset: 0; }
+}
+
+@keyframes dash-flow-fast {
+  from { stroke-dashoffset: 40; }
+  to   { stroke-dashoffset: 0; }
+}
+
+@keyframes node-pulse {
+  0%, 100% { opacity: 0.9; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(1.15); }
+}
+
+@keyframes red-danger-pulse {
+  0%, 100% {
+    opacity: 0.85;
+    filter: drop-shadow(0 0 10px rgba(255, 30, 60, 0.9));
+  }
+  50% {
+    opacity: 0.35;
+    filter: drop-shadow(0 0 25px rgba(255, 0, 50, 1));
+  }
+}
+
+@keyframes radar-ripple {
+  0% {
+    r: 6;
+    opacity: 0.9;
+  }
+  100% {
+    r: 32;
+    opacity: 0;
+  }
+}
+
+@keyframes red-beacon-flash {
+  0%, 100% { opacity: 1; fill: #ff1744; }
+  50% { opacity: 0.3; fill: #ff5252; }
+}
+
+@keyframes hazard-scroll {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: 20; }
+}
+
+.net-line {
+  stroke-dasharray: 8 6;
+  animation: dash-flow 1.8s linear infinite;
+}
+
+.net-line-alert {
+  stroke-dasharray: 6 4;
+  animation: dash-flow-fast 0.6s linear infinite;
+}
+
+.safe-pulse {
+  animation: node-pulse 2.2s ease-in-out infinite;
+}
+
+.danger-glow-anim {
+  animation: red-danger-pulse 1s ease-in-out infinite;
+}
+
+.beacon-flash {
+  animation: red-beacon-flash 0.8s ease-in-out infinite;
+}
+
+.radar-ring {
+  animation: radar-ripple 1.6s cubic-bezier(0.2, 0.8, 0.4, 1) infinite;
+}
+
+.radar-ring-delayed {
+  animation: radar-ripple 1.6s cubic-bezier(0.2, 0.8, 0.4, 1) infinite;
+  animation-delay: 0.8s;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background-color: #04070d;
+}
