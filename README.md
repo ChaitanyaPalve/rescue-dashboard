@@ -1,16 +1,69 @@
-# 3D Isometric Campus Model — Node-Based Classroom Telemetry System
+# ResQMesh Command Center — 3D Digital Twin & Telemetry Dashboard
 
-An interactive 3D digital twin and node-based telemetry monitoring system built with **React 19**, **Vite**, **TypeScript**, and **Tailwind CSS**.
+An emergency command center, 3D isometric digital twin, and node-based telemetry monitoring system built with **React 19**, **Vite**, **TypeScript**, **Tailwind CSS**, **FastAPI**, and **Firebase (Cloud Firestore + Realtime Database Dual-Sync)**.
 
 ---
 
-## 🌟 Architecture & Node Mapping
+## 🗂️ Project Structure
 
-| Area / Zone | Assigned Node | Telemetry Function |
-| :--- | :--- | :--- |
-| **Class A** | **Node 1** | Primary West Wing classroom sentinel |
-| **Class B** | **Node 2** | Primary East Wing lab classroom sentinel |
-| **Exit A & Exit B** | **Node 3** | Dual Exit Controller Hub monitoring South & North portals |
+The project is cleanly decoupled into **Frontend** (optimized for **Vercel**) and **Backend** (optimized for **Render**):
+
+```text
+rescue-dashboard/
+├── backend/                  # Python FastAPI Backend (Deploy to Render)
+│   ├── main.py               # REST API, AI hazard assessment, and telemetry engine
+│   ├── requirements.txt      # Python dependencies
+│   ├── Procfile              # Render / Web server process runner
+│   └── README.md             # Backend setup & deployment guide
+│
+├── src/                      # React 19 Frontend (Deploy to Vercel)
+│   ├── components/           # 3D Isometric Map, Flow Diagram, Header, Controls, Logs
+│   ├── services/             # API client for Render backend
+│   ├── utils/                # Audio synthesizer & sound controller
+│   ├── firebase-sync.js      # Dual-sync (Cloud Firestore + Realtime Database)
+│   ├── App.tsx               # Main Command Center UI & state dispatcher
+│   └── main.tsx              # React entrypoint
+│
+├── render.yaml               # Infrastructure blueprint for 1-click Render deployment
+├── vercel.json               # SPA rewrite configuration for Vercel deployment
+├── vite.config.ts            # Clean Vite 8 bundler configuration
+└── package.json              # Frontend dependencies and build scripts
+```
+
+---
+
+## 🚀 Deployment Instructions
+
+### 1. Deploy Frontend to Vercel
+1. Log in to [Vercel](https://vercel.com/) and click **Add New...** → **Project**.
+2. Import your GitHub repository: `ChaitanyaPalve/rescue-dashboard`.
+3. Vercel automatically detects **Vite** using the included [`vercel.json`](./vercel.json).
+   - **Framework Preset**: Vite
+   - **Build Command**: `npm run build`
+   - **Output Directory**: `dist`
+4. Under **Environment Variables**, optionally set:
+   - `VITE_BACKEND_URL`: `https://your-backend-app.onrender.com`
+5. Click **Deploy**!
+
+### 2. Deploy Backend to Render
+1. Log in to [Render Dashboard](https://dashboard.render.com/).
+2. Click **New +** → **Blueprint** (or **Web Service**).
+3. Connect your repository: `ChaitanyaPalve/rescue-dashboard`.
+4. Render will read [`render.yaml`](./render.yaml):
+   - **Root Directory**: `backend`
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+5. Click **Apply** or **Create Web Service**!
+
+---
+
+## 🌟 Node & Classroom Mapping
+
+| Area / Zone | Assigned Node | Node ID Keys | Telemetry & Role |
+| :--- | :--- | :--- | :--- |
+| **Class A** | **Node 1** | `node1`, `node001`, `node-1` | West Wing classroom sentinel: **Temperature** & **Gas/Smoke/CO₂** |
+| **Class B** | **Node 2** | `node2`, `node002`, `node-2` | East Wing lab classroom sentinel: **Temperature**, **Gas**, & **Motion (`accelX`)** |
+| **Exit A & Exit B** | **Node 3** | `node3`, `node003`, `node-3` | **Dual Exit Controller Hub**: Monitors South (Exit A) & North (Exit B) portals, and counts **People Inside** |
 
 ---
 
@@ -32,66 +85,21 @@ flowchart LR
     style Alert fill:#2b0509,stroke:#ff1744,stroke-width:2px,color:#fff
 ```
 
-### Trigger Condition Rule
-> **When a trigger is activated, identify the specific affected class/area and highlight that area in RED.**
-> The red highlight appears **only** on the specific class/area where the trigger is detected, while all other areas remain unchanged.
-
 ---
 
-## 🚀 Key Features
+## 🛠️ Local Development
 
-1. **3D Isometric Campus Map**:
-   - Vector SVG isometric projection with architectural details, classroom furniture, and IoT sensor chips.
-   - Distinct alert shaders: affected rooms flash vivid neon red (`#ff1744`) with expanding radar ripples, while non-affected zones maintain calm teal/emerald secure styling.
-   - Dynamic evacuation pathway rerouting when an exit is compromised.
+### Run Frontend
+```bash
+npm install
+npm run dev
+```
+Open [http://localhost:3000](http://localhost:3000)
 
-2. **Node Architecture Flow Diagram**:
-   - Interactive flow pipeline tracing signals from physical campus spaces to assigned nodes and downstream highlight logic.
-   - Animated data packets that accelerate into red alert pulses along the triggered conduit.
-
-3. **Trigger Matrix & Simulation**:
-   - 1-click trigger triggers for **Class A**, **Class B**, **Exit A**, **Exit B**, and **Both Exits**.
-   - **Automated Demo Walkthrough**: 5-step automated sequence cycling through all areas to verify isolated highlighting.
-   - Customizable trigger events (Smoke/Fire, Emergency SOS, CO₂ spike, Intrusion, Manual Drill).
-   - Audio feedback synthesizer (Web Audio API) with mute toggle.
-
-4. **Multi-View Modes**:
-   - 🌐 **3D Isometric Map**
-   - 🔀 **Flow Architecture**
-   - ⚡ **Split Dual View**
-
----
-
-## 🛠️ Getting Started Locally
-
-### Prerequisites
-- Node.js (v18+)
-- npm or pnpm
-
-### Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/swaraliii19/isometric-campus-model.git
-   cd isometric-campus-model
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Start development server**:
-   ```bash
-   npm run dev
-   ```
-
-4. **Build for production**:
-   ```bash
-   npm run build
-   ```
-
----
-
-## 📄 License
-MIT License.
+### Run Backend
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+Open [http://localhost:8000/docs](http://localhost:8000/docs)
