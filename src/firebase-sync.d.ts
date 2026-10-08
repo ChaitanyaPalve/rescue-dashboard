@@ -1,5 +1,8 @@
 import { Database } from "firebase/database"
+import { Firestore } from "firebase/firestore"
 
+export const rtdb: Database
+export const firestore: Firestore
 export const db: Database
 
 export function subscribeToNodes(callback: (data: any) => void): () => void
