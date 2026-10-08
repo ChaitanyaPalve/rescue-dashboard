@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ResQMesh AI — Command Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #03080e;
+    --panel: #071724;
+    --panel-2: #0d2636;
+    --line: rgba(92,157,181,0.28);
+    --line-soft: rgba(92,157,181,0.16);
+    --ink: #f1fbff;
+    --ink-soft: #8ba7b5;
+    --cyan: #64f5df;
+    --green: #33d19b;
+    --amber: #e7c76f;
+    --red: #ff7180;
+    --violet: #9a8cff;
+    --display: 'Space Grotesk', sans-serif;
+    --body: 'Inter', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html, body{ height:100%; }
+  body{
+    margin:0; color:var(--ink); font-family: var(--body);
+    background:
+      radial-gradient(circle at 50% 0%, rgba(22,92,116,0.22), transparent 45%),
+      var(--bg);
+    padding: 20px 28px;
+    height:100vh; overflow:hidden;
+    display:flex; flex-direction:column;
+  }
+
+  header{
+    display:flex; justify-content:space-between; align-items:center;
+    margin-bottom: 16px; flex:0 0 auto;
+  }
+  .brand{ display:flex; align-items:center; gap:12px; }
+  .brand .mark{
+    width:36px; height:36px; border-radius:10px; background:var(--panel-2);
+    border:1px solid var(--line); display:flex; align-items:center; justify-content:center;
+  }
+  .brand .mark::before{
+    content:''; width:9px; height:9px; border-radius:50%; background:var(--cyan);
+    box-shadow:0 0 10px var(--cyan); animation: blip 1.8s ease-in-out infinite;
+  }
+  @keyframes blip{ 0%,100%{opacity:1; transform:scale(1);} 50%{opacity:0.4; transform:scale(0.75);} }
+  header h1{ font-family:var(--display); font-size:20px; font-weight:700; margin:0; letter-spacing:0.2px; }
+  header .sub{ font-size:11.5px; color:var(--ink-soft); margin-top:2px; }
+  header .clock{ font-size:12.5px; color:var(--ink-soft); text-align:right; font-variant-numeric: tabular-nums; }
+
+  .stats{
+    display:grid; grid-template-columns: repeat(5,1fr); gap:12px; margin-bottom:16px; flex:0 0 auto;
+  }
+  .stat{
+    background:var(--panel); border:1px solid var(--line-soft); border-radius:12px; padding:14px 16px;
+  }
+  .stat .label{ font-size:10.5px; color:var(--ink-soft); letter-spacing:0.5px; }
+  .stat .value{ font-family:var(--display); font-size:24px; font-weight:700; margin-top:5px; }
+  .v-safe{ color:var(--green);} .v-warn{ color:var(--amber);} .v-danger{ color:var(--red);} .v-victim{ color:var(--violet);}
+
+  .layout{ display:grid; grid-template-columns: 2fr 1fr; gap:18px; flex:1 1 auto; min-height:0; }
+  .panel{ background:var(--panel); border:1px solid var(--line-soft); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; min-height:0; }
+  .panel-head{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:13px 18px; border-bottom:1px solid var(--line-soft); flex:0 0 auto;
+  }
+  .panel-head h2{ font-family:var(--display); font-size:12.5px; letter-spacing:0.3px; color:var(--ink-soft); margin:0; font-weight:600; }
+  .panel-head .tag{ font-size:10px; color:var(--cyan); background:rgba(100,245,223,0.1); border-radius:20px; padding:3px 10px; letter-spacing:0.5px; }
+  .panel-head .head-actions{ display:flex; align-items:center; gap:10px; }
+  .fs-btn{
+    display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+    background:rgba(100,245,223,0.08); border:1px solid var(--line); color:var(--cyan);
+    font-family:var(--body); font-size:11px; font-weight:600; letter-spacing:0.3px;
+    padding:6px 12px; border-radius:20px; transition: background .15s, border-color .15s;
+  }
+  .fs-btn:hover{ background:rgba(100,245,223,0.16); border-color:var(--cyan); }
+  .panel-body{ padding:16px; flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+
+  /* ---- full-screen map mode ---- */
+  #mapPanel:fullscreen,
+  #mapPanel:-webkit-full-screen{
+    background: var(--bg); display:flex; flex-direction:column; width:100vw; height:100vh;
+    border-radius:0; border:none;
+  }
+  #mapPanel:fullscreen .panel-body,
+  #mapPanel:-webkit-full-screen .panel-body{
+    flex:1; min-height:0; display:flex; flex-direction:column; padding:20px 28px 24px;
+  }
+  #mapPanel:fullscreen .map-wrapper,
+  #mapPanel:-webkit-full-screen .map-wrapper{ flex:1; min-height:0; }
+  #mapPanel:fullscreen .campus-map,
+  #mapPanel:-webkit-full-screen .campus-map{ width:100%; height:100%; }
+  #mapPanel:fullscreen .panel-head,
+  #mapPanel:-webkit-full-screen .panel-head{ padding:16px 28px; }
+
+  .map-info{
+    display:flex; justify-content:space-between; align-items:center; gap:16px;
+    padding:0 0 14px; margin-bottom:14px; border-bottom:1px solid var(--line-soft); flex:0 0 auto;
+  }
+  .map-info .small-title{ display:block; font-size:9.5px; color:var(--ink-soft); letter-spacing:1px; margin-bottom:4px; }
+  .map-info strong{ color:var(--cyan); font-size:15px; }
+  .map-legend{ display:flex; gap:14px; font-size:11px; color:var(--ink-soft); }
+  .map-legend span{ display:flex; align-items:center; gap:6px; }
+  .map-legend i{ width:14px; height:3px; border-radius:99px; display:inline-block; }
+
+  .map-wrapper{ border-radius:10px; overflow:hidden; background:#040d16; flex:1 1 auto; min-height:0; display:flex; }
+  .campus-map{ display:block; width:100%; height:100%; }
+
+  .main-floor{ fill:#0a1c28; stroke:#3c6d80; stroke-width:2; }
+  .outer-outline{ fill:none; stroke:#2c5666; stroke-width:2; stroke-dasharray:7 10; opacity:0.8; }
+
+  .room-floor{ fill:#123244; stroke:var(--cyan); stroke-width:1.6; opacity:0.9; }
+  .wall-front{ fill:#102d3d; stroke:#5c9dad; stroke-width:1.6; transition: fill 0.4s ease, stroke 0.4s ease; }
+  .wall-side{ fill:#0b2231; stroke:#4e8c9f; stroke-width:1.6; }
+  .wall-side-dark{ fill:#071923; stroke:#376b7d; stroke-width:1.6; }
+  .wall-shadow{ fill:#06111a; stroke:#1e4b5d; stroke-width:1.2; opacity:0.85; }
+  .room-outline{ fill:none; stroke:rgba(141,207,218,0.55); stroke-width:1.6; stroke-dasharray:5 5; }
+  .opening{ fill:none; stroke:var(--cyan); stroke-width:3.5; opacity:0.9; }
+  .room-title{ fill:#f1fbff; font-size:16px; font-weight:800; letter-spacing:1px; text-anchor:middle; }
+  .room-subtitle{ fill:var(--cyan); font-size:9.5px; font-weight:700; letter-spacing:1.5px; text-anchor:middle; }
+
+  /* risk overrides — applied by JS as classes on the room group */
+  .room-group.risk-medium .wall-front, .room-group.risk-medium .room-floor{ fill:#5a441a; stroke:var(--amber); }
+  .room-group.risk-high .wall-front, .room-group.risk-high .room-floor{ fill:#5a1f22; stroke:var(--red); animation: roomPulse 1.6s infinite; }
+  @keyframes roomPulse{ 0%{opacity:1;} 50%{opacity:0.7;} 100%{opacity:1;} }
+  .room-group.victim .room-subtitle::after{ content:' · POSSIBLE VICTIMS'; }
+
+  .stair-top{ fill:#17394b; stroke:var(--amber); stroke-width:1.6; }
+  .stair-side{ fill:#102838; stroke:#bd9e50; stroke-width:1.6; }
+  .stair-front{ fill:#0b1d2a; stroke:#927c43; stroke-width:1.6; }
+  .step{ fill:none; stroke:#f1d77f; stroke-width:1.6; opacity:0.9; }
+
+  .stairwell .handrail{ fill:none; stroke:var(--amber); stroke-width:2; stroke-linecap:round; opacity:0.9; }
+  .stairwell .rail-post{ fill:var(--amber); opacity:0.9; }
+  .stairwell .up-indicator path{ fill:var(--amber); opacity:0.95; animation: upPulse 1.8s ease-in-out infinite; }
+  @keyframes upPulse{ 0%,100%{opacity:0.55; transform:translateY(0);} 50%{opacity:1; transform:translateY(-3px);} }
+  .room-label-plate{ fill:rgba(4,17,26,0.82); stroke:rgba(231,199,111,0.5); stroke-width:1; }
+  .room-group#zoneD .room-title{ fill:#ffe9b0; }
+  .room-group#zoneD .room-subtitle{ fill:var(--amber); }
+  .room-group.risk-medium .stairwell .handrail, .room-group.risk-medium .room-label-plate{ stroke:var(--amber); }
+  .room-group.risk-high .stairwell .step{ stroke:var(--red); }
+
+  .exit{ cursor:pointer; }
+  .exit-tag{ fill:rgba(71,18,32,0.85); stroke:var(--red); stroke-width:1.4; transition: fill 0.3s ease, stroke 0.3s ease; }
+  .exit-point{ fill:var(--green); }
+  .exit-text{ fill:#ffd9dc; font-size:11px; font-weight:800; letter-spacing:0.6px; }
+  .exit-opening{ fill:none; stroke:var(--red); stroke-width:3.5; opacity:0.85; }
+  .exit:hover .exit-tag{ filter:brightness(1.25); }
+  .exit.blocked .exit-tag{ fill:rgba(71,18,32,1); stroke:var(--red); }
+  .exit.blocked .exit-point{ fill:var(--red); }
+  .exit:not(.blocked) .exit-point{ fill:var(--green); }
+
+  .route-line{ fill:none; stroke:var(--cyan); stroke-width:3.5; stroke-linecap:round; stroke-dasharray:2 12; opacity:0.85;
+    animation: routeMove 3s linear infinite; }
+  @keyframes routeMove{ to{ stroke-dashoffset:-42; } }
+  .route-node{ fill:var(--cyan); }
+
+  .node-marker{ cursor:default; }
+  .node-marker circle.dot{ transition: fill 0.3s ease, opacity 0.3s ease; }
+  .node-marker text{ fill:#e8fff6; font-size:9px; font-weight:800; letter-spacing:0.4px; text-anchor:middle;
+    paint-order: stroke; stroke:#03080e; stroke-width:3px; }
+  .node-marker.status-online circle.dot{ fill:var(--green); opacity:1; }
+  .node-marker.status-offline circle.dot{ fill:var(--ink-soft); opacity:0.55; }
+  .node-marker.status-quarantined circle.dot{ fill:var(--violet); opacity:1; animation: roomPulse 1.2s infinite; }
+
+  .compass circle{ fill:rgba(4,21,32,0.85); stroke:#6595a6; stroke-width:1.3; }
+  .compass path{ fill:var(--cyan); }
+  .compass text{ fill:#b0e9e8; font-size:11px; font-weight:800; }
+
+  .side-stack{ display:flex; flex-direction:column; gap:18px; min-height:0; }
+  .side-stack .panel:last-child{ flex:1 1 auto; min-height:0; }
+  .side-stack .panel:last-child .panel-body{ overflow:hidden; }
+  ul.log{ list-style:none; margin:0; padding:0; flex:1 1 auto; min-height:0; overflow-y:auto; }
+  ul.log li{ font-size:12px; padding:8px 0; border-bottom:1px solid var(--line-soft); color:var(--ink-soft); }
+  ul.log li:last-child{ border-bottom:none; }
+  ul.log li span{ color:var(--cyan); font-weight:600; margin-right:6px; }
+  ul.log li.sos{ color:var(--red); }
+  ul.log li.threat{ color:var(--amber); }
+
+  .controls{ display:flex; flex-direction:column; gap:8px; }
+  button{
+    background:var(--panel-2); border:1px solid var(--line-soft); color:var(--ink);
+    font-family:var(--body); font-size:12.5px; font-weight:500; padding:11px 14px; border-radius:9px;
+    cursor:pointer; text-align:left; transition: border-color .15s, background .15s;
+  }
+  button:hover{ border-color:var(--cyan); }
+  button.danger:hover{ border-color:var(--red); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="mark"></div>
+    <div>
+      <h1>ResQMesh AI</h1>
+      <div class="sub">Self-healing emergency network — command center</div>
+    </div>
+  </div>
+  <div style="text-align:right;">
+    <div class="clock" id="clock"></div>
+    <div id="connStatus" style="font-size:11px; margin-top:3px; color:var(--ink-soft);">● checking backend…</div>
+  </div>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="label">Nodes online</div><div class="value v-safe" id="statNodes">7/7</div></div>
+  <div class="stat"><div class="label">SOS active</div><div class="value v-danger" id="statSOS">0</div></div>
+  <div class="stat"><div class="label">Overall risk</div><div class="value v-warn" id="statRisk">Low</div></div>
+  <div class="stat"><div class="label">Unaccounted</div><div class="value v-victim" id="statMissing">0</div></div>
+  <div class="stat"><div class="label">Network</div><div class="value v-safe" id="statNet">Healthy</div></div>
+</div>
+
+<div class="layout">
+
+  <div class="panel" id="mapPanel">
+    <div class="panel-head">
+      <h2>Live digital twin — campus map</h2>
+      <div class="head-actions">
+        <span class="tag">Live</span>
+        <span class="fs-btn" id="fsBtn" onclick="toggleMapFullscreen()">⛶ Full screen</span>
+      </div>
+    </div>
+    <div class="panel-body">
+
+      <div class="map-info">
+        <div>
+          <span class="small-title">RECOMMENDED EXIT</span>
+          <strong id="routeLabel">Exit B</strong>
+        </div>
+        <div class="map-legend">
+          <span><i style="background:#5c9dad"></i>Walls</span>
+          <span><i style="background:var(--cyan)"></i>Route</span>
+          <span><i style="background:var(--amber)"></i>Stairs</span>
+          <span><i style="background:var(--green); border-radius:50%; width:8px; height:8px;"></i>Node</span>
+        </div>
+      </div>
+
+      <div class="map-wrapper">
+        <svg class="campus-map" viewBox="0 0 1000 720" xmlns="http://www.w3.org/2000/svg" aria-label="Dark 3D campus floor map">
+          <defs>
+            <filter id="cyanGlow" x="-100%" y="-100%" width="300%" height="300%">
+              <feGaussianBlur stdDeviation="4" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="amberGlow" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="2.2" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <marker id="routeArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#63f4df"/>
+            </marker>
+          </defs>
+
+          <polygon class="main-floor" points="85,565 245,75 800,60 930,565 650,670 150,670"/>
+          <polyline class="outer-outline" points="85,565 245,75 800,60 930,565 650,670 150,670 85,565"/>
+
+          <!-- CLASS A — upper-left, zone A -->
+          <g class="room-group" id="zoneA">
+            <polygon class="wall-shadow" points="120,145 315,145 345,170 150,170"/>
+            <polygon class="wall-shadow" points="120,145 150,170 150,300 120,275"/>
+            <polygon class="room-floor" points="120,115 315,115 345,140 150,140"/>
+            <polygon class="wall-front" points="120,115 315,115 315,225 120,225"/>
+            <polygon class="wall-side" points="315,115 345,140 345,250 315,225"/>
+            <polygon class="wall-side-dark" points="120,115 150,140 150,250 120,225"/>
+            <path class="opening" d="M205 225 V195 H250 V225"/>
+            <rect class="room-outline" x="120" y="115" width="195" height="110"/>
+            <text class="room-title" x="218" y="166">CLASS A</text>
+            <text class="room-subtitle" x="218" y="188">ZONE A</text>
+          </g>
+
+          <!-- EXIT B — top-center -->
+          <g class="exit" id="exitB">
+            <path class="exit-opening" d="M450 78 V120 H530 V78"/>
+            <rect class="exit-tag" x="450" y="30" width="80" height="32" rx="8"/>
+            <circle class="exit-point" cx="468" cy="46" r="5"/>
+            <text class="exit-text" x="480" y="51">EXIT B</text>
+          </g>
+
+          <!-- STAIRS — upper-right, zone D -->
+          <g class="room-group" id="zoneD">
+            <polygon class="wall-shadow" points="655,130 825,115 865,145 695,160"/>
+            <polygon class="room-floor" points="655,100 825,85 865,115 695,130"/>
+            <polygon class="wall-front" points="655,100 825,85 825,215 655,230"/>
+            <polygon class="wall-side" points="825,85 865,115 865,245 825,215"/>
+            <polygon class="wall-side-dark" points="655,100 695,130 695,260 655,230"/>
+            <path class="opening" d="M665 226 V193 H701 V226"/>
+            <rect class="room-outline" x="655" y="100" width="170" height="130"/>
+
+            <!-- flight of stairs, ascending through the room toward the back wall -->
+            <g class="stairwell">
+              <polygon class="stair-side" points="798,120 830,142 830,197 798,175"/>
+              <polygon class="stair-front" points="670,140 700,162 700,217 670,195"/>
+              <polygon class="stair-top" points="670,140 798,120 830,142 700,162" filter="url(#amberGlow)"/>
+              <path class="step" d="M670 140 L700 162"/>
+              <path class="step" d="M691.3 136.7 L721.3 158.7"/>
+              <path class="step" d="M712.7 133.3 L742.7 155.3"/>
+              <path class="step" d="M734 130 L764 152"/>
+              <path class="step" d="M755.3 126.7 L785.3 148.7"/>
+              <path class="step" d="M776.7 123.3 L806.7 145.3"/>
+              <path class="step" d="M798 120 L828 142"/>
+              <!-- handrail -->
+              <path class="handrail" d="M665 137 Q735 108 803 116"/>
+              <circle class="rail-post" cx="668" cy="139" r="2.2"/>
+              <circle class="rail-post" cx="716" cy="122" r="2.2"/>
+              <circle class="rail-post" cx="764" cy="113" r="2.2"/>
+              <circle class="rail-post" cx="800" cy="116" r="2.2"/>
+              <!-- up indicator -->
+              <g class="up-indicator" transform="translate(789,99)">
+                <path d="M0 6 L5 -3 L10 6 Z"/>
+              </g>
+            </g>
+
+            <rect class="room-label-plate" x="710" y="220" width="110" height="32" rx="6"/>
+            <text class="room-title" x="765" y="235" font-size="12.5">STAIRS</text>
+            <text class="room-subtitle" x="765" y="247" font-size="8">ZONE D</text>
+          </g>
+
+          <!-- decorative stair prop, left — matches the loose stair block in the real model -->
+          <g class="stairs-deco">
+            <polygon class="stair-side" points="110,285 235,270 270,295 145,310"/>
+            <polygon class="stair-front" points="110,285 145,310 145,410 110,385"/>
+            <polygon class="stair-top" points="145,260 270,245 305,270 180,285"/>
+            <path class="step" d="M145 260 L180 285"/><path class="step" d="M160 258 L195 283"/>
+            <path class="step" d="M175 256 L210 281"/><path class="step" d="M190 254 L225 279"/>
+            <path class="step" d="M205 252 L240 277"/><path class="step" d="M220 250 L255 275"/>
+            <path class="step" d="M235 248 L270 273"/><path class="step" d="M250 246 L285 271"/>
+          </g>
+
+          <!-- decorative stair prop, center — mesh gateway landmark -->
+          <g class="stairs-deco">
+            <polygon class="stair-side" points="420,300 510,290 545,315 455,328"/>
+            <polygon class="stair-front" points="420,300 455,328 455,425 420,397"/>
+            <polygon class="stair-top" points="455,275 545,265 580,290 490,303"/>
+            <path class="step" d="M455 275 L490 303"/><path class="step" d="M467 274 L502 302"/>
+            <path class="step" d="M479 272 L514 300"/><path class="step" d="M491 271 L526 299"/>
+            <path class="step" d="M503 270 L538 298"/><path class="step" d="M515 269 L550 297"/>
+            <path class="step" d="M527 267 L562 295"/><path class="step" d="M539 266 L574 294"/>
+            <g class="node-marker status-online" id="marker-gateway">
+              <circle class="dot" cx="500" cy="330" r="6" filter="url(#cyanGlow)"/>
+            </g>
+            <text x="500" y="360" text-anchor="middle" fill="#7fd3ce" font-size="10" letter-spacing="1">MESH GATEWAY</text>
+          </g>
+
+          <!-- PASSAGE / GATEWAY — bottom-left, zone C -->
+          <g class="room-group" id="zoneC">
+            <polygon class="wall-shadow" points="105,470 310,455 345,480 140,495"/>
+            <polygon class="room-floor" points="105,445 310,430 345,455 140,470"/>
+            <polygon class="wall-front" points="105,445 310,430 310,560 105,575"/>
+            <polygon class="wall-side" points="310,430 345,455 345,585 310,560"/>
+            <polygon class="wall-side-dark" points="105,445 140,470 140,600 105,575"/>
+            <path class="opening" d="M205 567 V540 H250 V564"/>
+            <rect class="room-outline" x="105" y="445" width="205" height="130"/>
+            <text class="room-title" x="210" y="500" font-size="14">PASSAGE / GATEWAY</text>
+            <text class="room-subtitle" x="210" y="523">ZONE C</text>
+          </g>
+
+          <!-- CLASS B — lower-right, zone B -->
+          <g class="room-group" id="zoneB">
+            <polygon class="wall-shadow" points="650,480 850,465 885,490 685,505"/>
+            <polygon class="room-floor" points="650,455 850,440 885,465 685,480"/>
+            <polygon class="wall-front" points="650,455 850,440 850,570 650,585"/>
+            <polygon class="wall-side" points="850,440 885,465 885,595 850,570"/>
+            <polygon class="wall-side-dark" points="650,455 685,480 685,610 650,585"/>
+            <path class="opening" d="M750 578 V550 H795 V575"/>
+            <rect class="room-outline" x="650" y="455" width="200" height="130"/>
+            <text class="room-title" x="750" y="510">CLASS B</text>
+            <text class="room-subtitle" x="750" y="533">ZONE B</text>
+          </g>
+
+          <!-- EXIT A — bottom-center -->
+          <g class="exit" id="exitA">
+            <path class="exit-opening" d="M450 635 V590 H535 V635"/>
+            <rect class="exit-tag" x="450" y="655" width="80" height="32" rx="8"/>
+            <circle class="exit-point" cx="468" cy="671" r="5"/>
+            <text class="exit-text" x="480" y="676">EXIT A</text>
+          </g>
+
+          <!-- MESH NODE STATUS DOTS — ids match state.nodes[i].id exactly -->
+          <g class="node-marker status-online" id="marker-node-1">
+            <circle class="dot" cx="232" cy="127" r="6" filter="url(#cyanGlow)"/>
+            <text x="232" y="112">N1</text>
+          </g>
+          <g class="node-marker status-online" id="marker-node-4">
+            <circle class="dot" cx="812" cy="93" r="6" filter="url(#cyanGlow)"/>
+            <text x="812" y="78">N4</text>
+          </g>
+          <g class="node-marker status-online" id="marker-node-3">
+            <circle class="dot" cx="225" cy="450" r="6" filter="url(#cyanGlow)"/>
+            <text x="225" y="435">N3</text>
+          </g>
+          <g class="node-marker status-online" id="marker-node-2">
+            <circle class="dot" cx="767" cy="465" r="6" filter="url(#cyanGlow)"/>
+            <text x="767" y="450">N2</text>
+          </g>
+          <g class="node-marker status-online" id="marker-node-7">
+            <circle class="dot" cx="270" cy="610" r="6" filter="url(#cyanGlow)"/>
+            <text x="270" y="595">N7</text>
+          </g>
+
+          <path class="route-line" id="routeLine"
+                d="M490 640 C475 570 485 500 500 425 C510 375 500 330 500 285 C560 250 615 225 685 207"
+                marker-end="url(#routeArrow)"/>
+          <circle class="route-node" cx="490" cy="640" r="6"/>
+          <circle class="route-node" cx="500" cy="425" r="6"/>
+          <circle class="route-node" cx="500" cy="285" r="6"/>
+
+          <g class="compass" transform="translate(900 80)">
+            <circle cx="0" cy="0" r="24"/>
+            <path d="M0 -16 L6 7 L0 2 L-6 7 Z"/>
+            <text x="-4" y="-28">N</text>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="side-stack">
+    <div class="panel">
+      <div class="panel-head"><h2>Control matrix</h2></div>
+      <div class="panel-body">
+        <div class="controls">
+          <button onclick="triggerDisaster()">⚡ Sensor spike</button>
+          <button onclick="sendSOS()">📶 Send SOS</button>
+          <button onclick="failNode()">🔌 Node fail</button>
+          <button class="danger" id="toggleExitA" onclick="blockExit('A')">Block / unblock Exit A</button>
+          <button class="danger" id="toggleExitB" onclick="blockExit('B')">Block / unblock Exit B</button>
+          <button class="danger" onclick="triggerThreat()">Simulate malicious Node 7</button>
+          <button onclick="resetAll()">Reset demo</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Event log</h2></div>
+      <div class="panel-body">
+        <ul class="log" id="eventLog"></ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ============================================================
+   0. BACKEND CONFIG — the ONE line you edit on demo day.
+   ============================================================ */
+const API_BASE = 'http://127.0.0.1:8000';
+const LIVE_MODE = true;   // true = sirf backend ka asli data | false = purana demo mode
+
+/* ============================================================
+   1. STATE
+   ============================================================ */
+const state = {
+  zones: [
+    {id:'A', name:'Class A',           risk:'safe'},
+    {id:'D', name:'Stairs',            risk:'safe'},
+    {id:'C', name:'Passage / Gateway', risk:'safe'},
+    {id:'B', name:'Class B',           risk:'safe'},
+  ],
+  nodes: [
+    {id:'node-1', status:'online', zone:'A'},
+    {id:'node-4', status:'online', zone:'D'},
+    {id:'node-3', status:'online', zone:'C'},
+    {id:'node-2', status:'online', zone:'B'},
+    {id:'gateway', status:'online', zone:'HUB'},
+    {id:'node-7', status:'online', zone:'SPARE'},
+  ],
+  exits: [
+    {id:'EXIT_B', label:'B', blocked:false},
+    {id:'EXIT_A', label:'A', blocked:false},
+  ],
+  sos: [],
+  missing: 0
+};
+
+const zoneInputs = {
+  A: { occupancy_before:42, confirmed_safe:31, rescued:4, damage:0.10, devices_last_seen:18, devices_alive:18, sensor_score:0.10, node_failures:0 },
+  B: { occupancy_before:38, confirmed_safe:18, rescued:2, damage:0.10, devices_last_seen:16, devices_alive:16, sensor_score:0.10, node_failures:0 },
+  C: { occupancy_before:20, confirmed_safe:20, rescued:0, damage:0.05, devices_last_seen:10, devices_alive:10, sensor_score:0.05, node_failures:0 },
+  D: { occupancy_before:15, confirmed_safe:15, rescued:0, damage:0.05, devices_last_seen:8,  devices_alive:8,  sensor_score:0.05, node_failures:0 },
+};
+
+/* ============================================================
+   2. RENDER — toggles classes on the SVG instead of building divs
+   ============================================================ */
+function render(){
+  state.zones.forEach(z=>{
+    const g = document.getElementById('zone' + z.id);
+    if(!g) return;
+    g.classList.remove('risk-safe','risk-medium','risk-high','victim');
+    g.classList.add('risk-' + (z.risk === 'medium' ? 'medium' : z.risk === 'high' ? 'high' : 'safe'));
+    if(z.victim) g.classList.add('victim');
+  });
+
+  state.exits.forEach(e=>{
+    const g = document.getElementById('exit' + e.label);
+    if(!g) return;
+    g.classList.toggle('blocked', e.blocked);
+  });
+
+  state.nodes.forEach(n=>{
+    const m = document.getElementById('marker-' + n.id);
+    if(!m) return;
+    m.classList.remove('status-online','status-offline','status-quarantined');
+    m.classList.add('status-' + n.status);
+  });
+
+  const online = state.nodes.filter(n=>n.status==='online').length;
+  document.getElementById('statNodes').textContent = online + '/' + state.nodes.length;
+  document.getElementById('statSOS').textContent = state.sos.length;
+  document.getElementById('statMissing').textContent = state.missing;
+
+  const highRisk = state.zones.some(z=>z.risk==='high');
+  const medRisk = state.zones.some(z=>z.risk==='medium');
+  const riskEl = document.getElementById('statRisk');
+  riskEl.textContent = highRisk ? 'High' : medRisk ? 'Medium' : 'Low';
+  riskEl.className = 'value ' + (highRisk ? 'v-danger' : medRisk ? 'v-warn' : 'v-safe');
+
+  const netEl = document.getElementById('statNet');
+  const anyOffline = state.nodes.some(n=>n.status==='offline');
+  netEl.textContent = anyOffline ? 'Self-healing' : 'Healthy';
+  netEl.className = 'value ' + (anyOffline ? 'v-warn' : 'v-safe');
+
+  document.getElementById('toggleExitA').textContent =
+    'Block / unblock Exit A' + (state.exits.find(e=>e.label==='A')?.blocked ? ' (blocked)' : '');
+  document.getElementById('toggleExitB').textContent =
+    'Block / unblock Exit B' + (state.exits.find(e=>e.label==='B')?.blocked ? ' (blocked)' : '');
+
+  const open = state.exits.find(e=>!e.blocked);
+  document.getElementById('routeLabel').textContent = open ? ('Exit ' + open.label) : 'No safe exit';
+  document.getElementById('routeLine').style.stroke = open ? '#64f5df' : '#ff7180';
+}
+
+function log(msg, cls){
+  const ul = document.getElementById('eventLog');
+  const li = document.createElement('li');
+  if(cls) li.className = cls;
+  const t = new Date().toLocaleTimeString();
+  li.innerHTML = `<span>${t}</span>${msg}`;
+  ul.prepend(li);
+}
+
+/* ============================================================
+   3. BACKEND CALLS
+   ============================================================ */
+function buildAnalyzePayload(){
+  const exits = {};
+  state.exits.forEach(e=>{ exits[e.id] = { blocked: e.blocked, crowd: 0, capacity: 40 }; });
+  const zones = {};
+  state.zones.forEach(z=>{
+    zones[z.id] = { ...zoneInputs[z.id], sos_count: state.sos.filter(s=>s.zone===z.id).length };
+  });
+  const nodes = {};
+  state.nodes.forEach(n=>{ nodes[n.id] = { online: n.status !== 'offline', zone: n.zone }; });
+  return { sos: state.sos, exits, zones, nodes };
+}
+
+async function runAnalyze(){
+  if (LIVE_MODE) return;   // server khud analyze karta hai
+  try{
+    const res = await fetch(API_BASE + '/api/analyze', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(buildAnalyzePayload())
+    });
+    const data = await res.json();
+    applyAnalyzeResult(data);
+    setConn(true);
+  } catch(err){
+    console.warn('Could not reach /api/analyze:', err);
+    setConn(false);
+    log('Backend unreachable — check API_BASE / WiFi / server is running', 'threat');
+  }
+}
+
+function applyAnalyzeResult(data){
+  if(!data || !data.ok) return;
+
+  if(data.risk_map){
+    Object.values(data.risk_map).forEach(rz=>{
+      const zone = state.zones.find(z=>z.id===rz.id);
+      if(zone) zone.risk = rz.level ? rz.level.toLowerCase() : 'safe';
+    });
+  }
+
+  const prevVictim = {};
+  state.zones.forEach(z=>{ prevVictim[z.id] = z.victim; z.victim = false; });
+  if(data.zerosignal){
+    state.missing = data.zerosignal.total_unaccounted || 0;
+    (data.zerosignal.zones || []).forEach(vz=>{
+      const zone = state.zones.find(z=>z.id===vz.id);
+      if(zone){
+        zone.victim = true;
+        if(!prevVictim[zone.id]) log('ZeroSignal AI: ' + zone.name + ' — ' + vz.probability + '% probability of unaccounted persons (' + vz.missing + ')', 'sos');
+      }
+    });
+  }
+
+  if(data.exits){
+    state.exits.forEach(e=>{
+      const info = data.exits[e.id];
+      if(info) e.blocked = info.status === 'BLOCKED';
+    });
+  }
+
+  if(data.sos) state.sos = data.sos;
+
+  render();
+}
+
+async function checkHealth(){
+  try{
+    const res = await fetch(API_BASE + '/api/health');
+    const data = await res.json();
+    setConn(data.status === 'ok');
+  } catch(err){ setConn(false); }
+}
+
+async function pollLive(){
+  try{
+    const res = await fetch(API_BASE + '/api/state');
+    const d = await res.json();
+    setConn(true);
+
+    (d.nodes || []).forEach(n=>{
+      const node = state.nodes.find(x=>x.id===n.id);
+      if(!node) return;
+      const st = n.status || (n.online ? 'online' : 'offline');
+      if(node.status !== st) log(n.id + (st==='online' ? ' back online' : ' is ' + st), st==='online' ? undefined : 'threat');
+      node.status = st;
+    });
+
+    state.exits.forEach(e=>{
+      const info = d.exits && d.exits[e.id];
+      if(info) e.blocked = !!info.blocked;
+    });
+
+    const oldCount = state.sos.length;
+    state.sos = d.sos || [];
+    if(state.sos.length > oldCount) log('New SOS received — ' + (state.sos[state.sos.length-1].label || 'SOS'), 'sos');
+
+    if(d.last_ai_result) applyAnalyzeResult(d.last_ai_result);
+    render();
+  } catch(err){ setConn(false); }
+}
+function setConn(ok){
+  const el = document.getElementById('connStatus');
+  el.textContent = ok ? '● backend connected' : '● backend offline (using local state)';
+  el.style.color = ok ? '#33d19b' : '#ff7180';
+}
+
+/* ============================================================
+   4. DEMO ACTIONS
+   ============================================================ */
+function triggerDisaster(){
+  if (LIVE_MODE) { log('Demo buttons disabled in LIVE mode'); return; }
+  zoneInputs.B.damage = 0.92; zoneInputs.B.sensor_score = 0.95; zoneInputs.B.devices_alive = 5;
+  zoneInputs.A.damage = 0.45; zoneInputs.A.sensor_score = 0.5;
+  // instant local preview so the demo never looks frozen while the backend responds (or if it's offline)
+  const zB = state.zones.find(z=>z.id==='B'); if(zB) zB.risk = 'high';
+  const zA = state.zones.find(z=>z.id==='A'); if(zA) zA.risk = 'medium';
+  render();
+  log('Sensor anomaly reported — vibration spike in Class B', 'threat');
+  runAnalyze();
+  // guaranteed fallback: if the backend hasn't already produced a ZeroSignal result
+  // within 1.5s, show the local demo version so this key moment never gets skipped
+  setTimeout(()=>{
+    if(state.missing === 0){
+      const z = state.zones.find(z=>z.id==='B');
+      if(z){ z.victim = true; state.missing = 18; render(); }
+      log('ZeroSignal AI: Class B — 68% probability of unaccounted persons (18 unaccounted)', 'sos');
+    }
+  }, 1500);
+}
+function sendSOS(){
+  if (LIVE_MODE) { log('Demo buttons disabled in LIVE mode'); return; }
+  const id = 'SOS-' + (state.sos.length + 1);
+  state.sos.push({ id, zone:'B', type:'fire', label:'Fire in Class B' });
+  render(); // instant local update — SOS count ticks up immediately
+  log('SOS sent — Class B, priority high', 'sos');
+  runAnalyze();
+}
+function failNode(){
+  if (LIVE_MODE) { log('Demo buttons disabled in LIVE mode'); return; }
+  const n = state.nodes.find(n=>n.id==='node-4');
+  n.status = 'offline';
+  render();
+  log('Node 4 (Stairs) offline — mesh rerouting');
+  setTimeout(()=> log('Rerouting complete — communication restored'), 900);
+  runAnalyze();
+}
+async function blockExit(exitLabel){
+  const e = state.exits.find(e=>e.label===exitLabel);
+  if(!e) return;
+  e.blocked = !e.blocked;
+  render();
+  log('Exit ' + exitLabel + (e.blocked ? ' blocked' : ' reopened') + ' — recalculating route', e.blocked ? 'threat' : undefined);
+  try{
+    await fetch(API_BASE + '/api/block-exit', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ exit: e.id, blocked: e.blocked })
+    });
+  } catch(err){ console.warn('block-exit call failed, continuing with /api/analyze only', err); }
+  runAnalyze();
+}
+function triggerThreat(){
+  if (LIVE_MODE) { log('Demo buttons disabled in LIVE mode'); return; }
+  const n = state.nodes.find(n=>n.id==='node-7');
+  n.status = 'quarantined';
+  render();
+  log('Suspicious traffic on Node 7 — threat signature shared to peers', 'threat');
+  setTimeout(()=> log('Node 7 quarantined — trust score reduced to 28%'), 900);
+}
+async function resetAll(){
+  try{ await fetch(API_BASE + '/api/reset', { method:'POST' }); }
+  catch(err){ console.warn('reset call failed, resetting locally only', err); }
+  state.zones.forEach(z=>{ z.risk='safe'; z.victim=false; });
+  state.nodes.forEach(n=> n.status='online');
+  state.exits.forEach(e=> e.blocked=false);
+  state.sos = []; state.missing = 0;
+  Object.assign(zoneInputs.A, { damage:0.10, sensor_score:0.10, devices_alive:18 });
+  Object.assign(zoneInputs.B, { damage:0.10, sensor_score:0.10, devices_alive:16 });
+  render();
+  document.getElementById('eventLog').innerHTML = '';
+  log('System reset — all nodes healthy');
+}
+
+function toggleMapFullscreen(){
+  const panel = document.getElementById('mapPanel');
+  if(!document.fullscreenElement){
+    (panel.requestFullscreen || panel.webkitRequestFullscreen).call(panel);
+  } else {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  }
+}
+document.addEventListener('fullscreenchange', ()=>{
+  document.getElementById('fsBtn').textContent = document.fullscreenElement ? '✕ Exit full screen' : '⛶ Full screen';
+});
+document.addEventListener('webkitfullscreenchange', ()=>{
+  document.getElementById('fsBtn').textContent = document.webkitFullscreenElement ? '✕ Exit full screen' : '⛶ Full screen';
+});
+
+/* wire exit clicks directly on the SVG groups too */
+document.getElementById('exitA').addEventListener('click', ()=>blockExit('A'));
+document.getElementById('exitB').addEventListener('click', ()=>blockExit('B'));
+
+/* ============================================================
+   5. CLOCK + INIT
+   ============================================================ */
+function tickClock(){
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toLocaleTimeString() + ' · ' + now.toDateString();
+}
+setInterval(tickClock, 1000); tickClock();
+
+render();
+log('System initialized — connecting to backend…');
+checkHealth();
+setInterval(checkHealth, 5000);
+if (LIVE_MODE) { pollLive(); setInterval(pollLive, 2000); }
+</script>
+
+</body>
+</html>
