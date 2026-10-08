@@ -1,16 +1,15 @@
 import { initializeApp, getApps, getApp } from "firebase/app"
 import { getDatabase, ref, onValue, set } from "firebase/database"
 
-// PhoenixNet Firebase configuration
+// Pre-configured for project: resq-hardware
 const firebaseConfig = {
-  apiKey: "AIzaSyB7Z4Y0F_ycBs5tPDYgjFik7y4fUWOWFk8",
-  authDomain: "pheonixnet.firebaseapp.com",
-  databaseURL: "https://pheonixnet-default-rtdb.firebaseio.com",
-  projectId: "pheonixnet",
-  storageBucket: "pheonixnet.firebasestorage.app",
-  messagingSenderId: "899855227001",
-  appId: "1:899855227001:web:fe80c643d06a86f477dca8",
-  measurementId: "G-YHB8P2YQXK",
+  apiKey: "AIzaSyCwU93VpmYydhM1zhrvCD7pFomkEFgeRVQ",
+  authDomain: "resq-hardware.firebaseapp.com",
+  databaseURL: "https://resq-hardware-default-rtdb.firebaseio.com",
+  projectId: "resq-hardware",
+  storageBucket: "resq-hardware.firebasestorage.app",
+  messagingSenderId: "326136146045",
+  appId: "1:326136146045:web:339c42bfcc9b90f3a8a914",
 }
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp()
@@ -66,3 +65,4 @@ export function clearWebEmergency() {
     timestamp: Date.now(),
   })
 }
+
