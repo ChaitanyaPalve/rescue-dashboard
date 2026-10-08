@@ -143,6 +143,11 @@ export function subscribeToEmergency(callback) {
                 active: true,
                 node: data.node || data.senderId || change.doc.id,
                 type: data.type || "SOS",
+                event_category: data.event_category || "smoke",
+                sender_name: data.sender_name || data.senderId || "Mobile Client",
+                lat: data.lat || 18.5204,
+                lon: data.lon || 73.8567,
+                message: data.message || "🚨 Emergency Alert Triggered",
                 timestamp: data.timestamp || Date.now(),
               })
             } else if (data && data.active === false) {
@@ -172,6 +177,11 @@ export function subscribeToEmergency(callback) {
                 active: true,
                 node: data.node || data.senderId || "HARDWARE_SOS",
                 type: data.type || "SOS",
+                event_category: data.event_category || "sos",
+                sender_name: data.sender_name || "Field Unit",
+                lat: data.lat || 18.5204,
+                lon: data.lon || 73.8567,
+                message: data.message || "🆘 SOS Signal Received",
                 timestamp: data.timestamp || Date.now(),
               })
             }
@@ -201,11 +211,17 @@ export function subscribeToEmergency(callback) {
 export async function triggerWebEmergency(
   sourceNode = "RESCUE_DASHBOARD",
   emergencyType = "SOS",
+  extra = {},
 ) {
   const payload = {
     active: true,
     node: sourceNode,
     type: emergencyType,
+    event_category: extra.event_category || "smoke",
+    sender_name: extra.sender_name || "ResQMesh Web Command Center",
+    lat: extra.lat || 18.5204,
+    lon: extra.lon || 73.8567,
+    message: extra.message || `🚨 Emergency Alert: ${emergencyType}`,
     timestamp: Date.now(),
   }
 
@@ -247,6 +263,8 @@ export async function clearWebEmergency() {
     active: false,
     node: "RESCUE_DASHBOARD",
     type: "CLEAR",
+    event_category: null,
+    message: "All sectors safe and nominal.",
     timestamp: Date.now(),
   }
 
@@ -272,4 +290,63 @@ export async function clearWebEmergency() {
   }
 
   await Promise.allSettled(tasks)
+}
+
+/**
+ * 5. Sync Demo Mode Walkthrough state to Firebase RTDB & Firestore
+ */
+export async function syncDemoModeToFirebase(active, step, description = "") {
+  const payload = {
+    active,
+    current_step: step,
+    description: description || (active ? `Demo Step ${step}` : "Nominal Monitoring"),
+    timestamp: Date.now(),
+  }
+
+  const tasks = []
+
+  try {
+    const demoRef = ref(rtdb, "demo_mode")
+    tasks.push(setRtdb(demoRef, payload).catch((e) => console.warn("RTDB demo set:", e.message)))
+  } catch (e) {
+    console.warn("RTDB demo ref:", e.message)
+  }
+
+  try {
+    tasks.push(
+      setDoc(doc(firestore, "system", "demo_mode"), payload).catch((e) =>
+        console.warn("Firestore demo set:", e.message),
+      ),
+    )
+  } catch (e) {
+    console.warn("Firestore demo set:", e.message)
+  }
+
+  await Promise.allSettled(tasks)
+}
+
+/**
+ * 6. Listen for Demo Mode changes from Mobile or Remote
+ */
+export function subscribeToDemoMode(callback) {
+  let unsubRtdb = () => {}
+  try {
+    const demoRef = ref(rtdb, "demo_mode")
+    unsubRtdb = onValue(
+      demoRef,
+      (snapshot) => {
+        const data = snapshot.val()
+        if (data) callback(data)
+      },
+      (error) => {
+        console.warn("RTDB Demo listener waiting:", error.message)
+      },
+    )
+  } catch (err) {
+    console.warn("RTDB Demo init:", err)
+  }
+
+  return () => {
+    unsubRtdb()
+  }
 }

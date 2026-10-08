@@ -19,13 +19,38 @@ import {
   subscribeToEmergency,
   triggerWebEmergency,
   clearWebEmergency,
+  syncDemoModeToFirebase,
+  subscribeToDemoMode,
 } from "./firebase-sync"
+import {
+  sendBackendEmergency,
+  sendBackendDemoStep,
+  resetBackendSystem,
+  subscribeToBackendStream,
+} from "./services/api"
 
 const now = () => {
   const d = new Date()
   return [d.getHours(), d.getMinutes(), d.getSeconds()]
     .map((n) => String(n).padStart(2, "0"))
     .join(":")
+}
+
+const mapTriggerToCategory = (type: TriggerType): string => {
+  switch (type) {
+    case "fire":
+      return "smoke"
+    case "sos":
+      return "sos"
+    case "co2":
+      return "co2"
+    case "motion":
+      return "intrusion"
+    case "manual":
+      return "drill"
+    default:
+      return "smoke"
+  }
 }
 
 export default function App() {
@@ -119,22 +144,37 @@ export default function App() {
   const [isSoundEnabled, setIsSoundEnabled] = useState(false)
   const [isAutoplayRunning, setIsAutoplayRunning] = useState(false)
   const [autoplayStep, setAutoplayStep] = useState(0)
+  const [backendStreamConnected, setBackendStreamConnected] = useState(false)
+
+  // Emergency state with complete incident telemetry
   const [emergency, setEmergency] = useState<{
     active?: boolean
     node?: string
     type?: string
+    event_category?: string
+    sender_name?: string
+    lat?: number
+    lon?: number
+    message?: string
     timestamp?: number
   }>({ active: false })
+
+  // Baseline telemetry defaults so the UI never displays "--" placeholders
   const [liveNodes, setLiveNodes] = useState<{
-    node001?: { temp?: number | string; gas?: number | string }
+    node001?: { temp?: number | string; gas?: number | string; motion?: boolean }
     node002?: {
       gas?: number | string
       accelX?: number | string
       temp?: number | string
+      motion?: boolean
     }
     node003?: { peopleInside?: number | string }
     [key: string]: any
-  }>({})
+  }>({
+    node001: { temp: 22.4, gas: 410, motion: false },
+    node002: { temp: 21.8, gas: 395, accelX: 0.02, motion: false },
+    node003: { peopleInside: 42 },
+  })
 
   // ── 4. Audit & Event Logs ───────────────────────────────────────────────────
   const [logs, setLogs] = useState<LogEntry[]>([
@@ -142,13 +182,13 @@ export default function App() {
       id: "1",
       time: now(),
       message:
-        "System Initialized: Class A → Node 1, Class B → Node 2, Exit A & Exit B → Node 3",
+        "ResQMesh AI Command Center Initialized. Dual-Sync (Render FastAPI + Firebase RTDB) active.",
       kind: "info",
     },
     {
       id: "2",
       time: now(),
-      message: "All 3 telemetry nodes online. Continuous monitoring engaged.",
+      message: "Telemetry Nodes 1, 2, 3 online. 0ms Push stream listening.",
       kind: "success",
     },
   ])
@@ -177,7 +217,7 @@ export default function App() {
     const next = !isSoundEnabled
     setIsSoundEnabled(next)
     soundController.enabled = next
-    addLog(`Audio synthesizer feedback: ${next ? "ENABLED" : "MUTED"}`, "info")
+    addLog(`Audio synthesizer & voice alerts: ${next ? "ENABLED" : "MUTED"}`, "info")
   }
 
   // ── Sync Node Statuses with Area Trigger States ─────────────────────────────
@@ -200,12 +240,11 @@ export default function App() {
     const current = areas[areaId]
     const willBeTriggered =
       isolationMode === "single" ? true : !current.isTriggered
+    const category = mapTriggerToCategory(selectedTriggerType)
 
     setAreas((prev) => {
       const next = { ...prev }
       if (isolationMode === "single") {
-        // Strict Isolation: Highlight ONLY the specific affected area in RED;
-        // ALL other areas remain UNCHANGED.
         ;(Object.keys(next) as AreaId[]).forEach((id) => {
           if (id === areaId) {
             next[id] = {
@@ -226,7 +265,6 @@ export default function App() {
           }
         })
       } else {
-        // Multi-area mode toggle
         next[areaId] = {
           ...next[areaId],
           isTriggered: willBeTriggered,
@@ -240,8 +278,39 @@ export default function App() {
 
     if (willBeTriggered) {
       soundController.playAlertSound()
+      const targetNodeId =
+        areaId === "classA"
+          ? "node001"
+          : areaId === "classB"
+            ? "node002"
+            : "node003"
+
+      const alertMsg = `🚨 ${selectedTriggerType.toUpperCase()} Alert on ${current.label} (${current.nodeLabel})`
+
+      // 1. Dispatch to FastAPI Backend
+      sendBackendEmergency({
+        active: true,
+        node: targetNodeId,
+        type: areaId === "classA" ? "class_a" : areaId === "classB" ? "class_b" : areaId,
+        event_category: category,
+        sender_name: `${current.label} Sentinel`,
+        lat: areaId === "classA" ? 18.5204 : areaId === "classB" ? 18.5208 : 18.5201,
+        lon: areaId === "classA" ? 73.8567 : areaId === "classB" ? 73.8572 : 73.8562,
+        message: alertMsg,
+      })
+
+      // 2. Dispatch to Firebase RTDB & Firestore
+      triggerWebEmergency(targetNodeId, areaId, {
+        event_category: category,
+        sender_name: `${current.label} Sentinel`,
+        message: alertMsg,
+      })
+
+      // 3. Audio Voice Announcement
+      soundController.speakVoiceAlert(alertMsg)
+
       addLog(
-        `🚨 TRIGGER ACTIVATED: ${current.label} (Monitored by ${current.nodeLabel}) highlighted in RED. Other areas UNCHANGED.`,
+        `🚨 TRIGGER ACTIVATED: ${current.label} (Monitored by ${current.nodeLabel}) [Category: ${category.toUpperCase()}]. Other areas UNCHANGED.`,
         "error",
         areaId,
         current.nodeId,
@@ -259,10 +328,10 @@ export default function App() {
 
   // ── Trigger Both Exits via Node 3 ───────────────────────────────────────────
   const handleTriggerBothExits = () => {
+    const category = mapTriggerToCategory(selectedTriggerType)
     setAreas((prev) => {
       const next = { ...prev }
       if (isolationMode === "single") {
-        // Keep Class A and Class B completely unchanged
         next.classA = {
           ...next.classA,
           isTriggered: false,
@@ -293,9 +362,31 @@ export default function App() {
       return next
     })
 
+    const alertMsg = "🚨 DUAL EXIT ALERT: Exit A & Exit B Blocked via Node 3 Hub"
+
+    // Dispatch to Backend & Firebase
+    sendBackendEmergency({
+      active: true,
+      node: "node003",
+      type: "both_exits",
+      event_category: category,
+      sender_name: "Dual Exit Hub Controller",
+      lat: 18.5205,
+      lon: 73.8564,
+      message: alertMsg,
+    })
+
+    triggerWebEmergency("node003", "both_exits", {
+      event_category: category,
+      sender_name: "Dual Exit Hub Controller",
+      message: alertMsg,
+    })
+
     soundController.playAlertSound()
+    soundController.speakVoiceAlert(alertMsg)
+
     addLog(
-      "⚠️ DUAL EXIT TRIGGER: Exit A & Exit B highlighted in RED via Node 3. Class A and Class B remain UNCHANGED.",
+      `⚠️ DUAL EXIT TRIGGER: Exit A & Exit B highlighted in RED via Node 3 [${category.toUpperCase()}]. Class A & B remain UNCHANGED.`,
       "error",
       "exitA",
       "node3",
@@ -352,37 +443,108 @@ export default function App() {
     })
 
     soundController.playResetSound()
+
+    // 1. Reset backend
+    resetBackendSystem()
+    sendBackendDemoStep(0, "RESET", false)
+
+    // 2. Clear Firebase
     clearWebEmergency()
+    syncDemoModeToFirebase(false, 0, "Nominal Monitoring")
+
     setEmergency({ active: false })
     addLog(
-      "🔄 System Reset: All triggers cleared. All areas returned to UNCHANGED (Safe) status.",
+      "🔄 System Reset: All triggers cleared. Backend & Firebase synchronized to SAFE nominal state.",
       "info",
     )
   }
 
-  // ── Trigger Web SOS to Firebase ─────────────────────────────────────────────
+  // ── Trigger Web SOS to Firebase & Backend ───────────────────────────────────
   const handleTriggerWebSOS = () => {
-    triggerWebEmergency("CAMPUS_WEB", "SOS")
+    const alertMsg = "🆘 Manual SOS Signal Triggered from Web Command Center"
+
+    sendBackendEmergency({
+      active: true,
+      node: "CAMPUS_WEB",
+      type: "sos",
+      event_category: "sos",
+      sender_name: "Web Incident Commander",
+      lat: 18.5204,
+      lon: 73.8567,
+      message: alertMsg,
+    })
+
+    triggerWebEmergency("CAMPUS_WEB", "sos", {
+      event_category: "sos",
+      sender_name: "Web Incident Commander",
+      message: alertMsg,
+    })
+
     handleTriggerSpecificArea("classA")
   }
 
   const handleClearAlert = () => {
-    clearWebEmergency()
     handleResetAll()
   }
 
-  // ── Firebase Realtime Subscriptions ─────────────────────────────────────────
+  // ── Real-Time Dual-Sync Subscriptions (SSE + Firebase) ──────────────────────
   useEffect(() => {
-    // 1. Subscribe to live SOS alerts
+    // 1. Fast 0ms Server-Sent Events (SSE) Stream from FastAPI Backend
+    const unsubscribeSSE = subscribeToBackendStream(
+      (serverState) => {
+        if (!serverState) return
+        setBackendStreamConnected(true)
+
+        // Telemetry Update
+        if (serverState.nodes) {
+          setLiveNodes((prev) => ({ ...prev, ...serverState.nodes }))
+
+          setAreas((prev) => {
+            const next = { ...prev }
+            const n1 = serverState.nodes.node001
+            const n2 = serverState.nodes.node002
+            const n3 = serverState.nodes.node003
+
+            if (n1) {
+              if (n1.temp !== undefined) next.classA = { ...next.classA, temperature: Number(n1.temp) }
+              if (n1.gas !== undefined) next.classA = { ...next.classA, co2Level: Number(n1.gas) }
+            }
+            if (n2) {
+              if (n2.temp !== undefined) next.classB = { ...next.classB, temperature: Number(n2.temp) }
+              if (n2.gas !== undefined) next.classB = { ...next.classB, co2Level: Number(n2.gas) }
+            }
+            if (n3 && n3.peopleInside !== undefined) {
+              next.exitA = { ...next.exitA, occupants: Number(n3.peopleInside) }
+            }
+            return next
+          })
+        }
+
+        // Emergency Update
+        if (serverState.emergency) {
+          setEmergency(serverState.emergency)
+          if (serverState.emergency.active && serverState.emergency.message) {
+            soundController.speakVoiceAlert(serverState.emergency.message)
+          }
+        }
+      },
+      () => {
+        setBackendStreamConnected(false)
+      },
+    )
+
+    // 2. Firebase RTDB Emergency Subscriptions
     const unsubscribeEmergency = subscribeToEmergency((emergencyData) => {
-      console.log("🚨 Live Emergency Event:", emergencyData)
       const data = emergencyData || { active: false }
       setEmergency(data)
 
       if (data.active) {
         soundController.playAlertSound()
+        if (data.message) {
+          soundController.speakVoiceAlert(data.message)
+        }
         addLog(
-          `🚨 FIREBASE EMERGENCY: Active from ${data.node || "REMOTE"} (${data.type || "SOS"})`,
+          `🚨 EMERGENCY RECEIVED: ${data.sender_name || data.node || "REMOTE"} [${(data.event_category || data.type || "SOS").toUpperCase()}]`,
           "error",
         )
         const nodeStr = (data.node || "").toLowerCase()
@@ -404,19 +566,14 @@ export default function App() {
           nodeStr.includes("exit")
         ) {
           handleTriggerBothExits()
-        } else {
-          handleTriggerSpecificArea("classA")
         }
-      } else {
-        addLog("✔ Firebase RTDB: Emergency status normal/cleared.", "info")
       }
     })
 
-    // 2. Subscribe to live sensor telemetry from ResQMesh Android nodes
+    // 3. Firebase RTDB Nodes Telemetry Subscriptions
     const unsubscribeNodes = subscribeToNodes((nodesData) => {
-      console.log("📊 Live Telemetry Data:", nodesData)
       if (nodesData) {
-        setLiveNodes(nodesData)
+        setLiveNodes((prev) => ({ ...prev, ...nodesData }))
         const n1 =
           nodesData.node001 ||
           nodesData.node1 ||
@@ -439,47 +596,36 @@ export default function App() {
         setAreas((prev) => {
           const next = { ...prev }
           if (n1) {
-            if (n1.temp !== undefined) {
-              next.classA = {
-                ...next.classA,
-                temperature: Number(n1.temp),
-              }
-            }
-            if (n1.gas !== undefined) {
-              next.classA = {
-                ...next.classA,
-                co2Level: Number(n1.gas),
-              }
-            }
+            if (n1.temp !== undefined) next.classA = { ...next.classA, temperature: Number(n1.temp) }
+            if (n1.gas !== undefined) next.classA = { ...next.classA, co2Level: Number(n1.gas) }
           }
           if (n2) {
-            if (n2.temp !== undefined) {
-              next.classB = {
-                ...next.classB,
-                temperature: Number(n2.temp),
-              }
-            }
-            if (n2.gas !== undefined) {
-              next.classB = {
-                ...next.classB,
-                co2Level: Number(n2.gas),
-              }
-            }
+            if (n2.temp !== undefined) next.classB = { ...next.classB, temperature: Number(n2.temp) }
+            if (n2.gas !== undefined) next.classB = { ...next.classB, co2Level: Number(n2.gas) }
           }
           if (n3 && n3.peopleInside !== undefined) {
-            next.exitA = {
-              ...next.exitA,
-              occupants: Number(n3.peopleInside),
-            }
+            next.exitA = { ...next.exitA, occupants: Number(n3.peopleInside) }
           }
           return next
         })
       }
     })
 
+    // 4. Remote Demo Mode listener
+    const unsubscribeDemo = subscribeToDemoMode((demoData) => {
+      if (demoData && typeof demoData.current_step === "number") {
+        setAutoplayStep(demoData.current_step)
+        if (demoData.active && !isAutoplayRunning) {
+          setIsAutoplayRunning(true)
+        }
+      }
+    })
+
     return () => {
+      unsubscribeSSE()
       unsubscribeEmergency()
       unsubscribeNodes()
+      unsubscribeDemo()
     }
   }, [])
 
@@ -492,30 +638,40 @@ export default function App() {
       return
     }
 
-    const steps: () => void[] = [
+    const steps = [
       // Step 1: Trigger Class A
       () => {
         setAutoplayStep(1)
+        sendBackendDemoStep(1, "TRIGGER_CLASS_A", true)
+        syncDemoModeToFirebase(true, 1, "Step 1: Smoke Hazard Detected in Class A")
         handleTriggerSpecificArea("classA")
       },
       // Step 2: Trigger Class B
       () => {
         setAutoplayStep(2)
+        sendBackendDemoStep(2, "TRIGGER_CLASS_B", true)
+        syncDemoModeToFirebase(true, 2, "Step 2: Air Quality Spike in Class B Lab")
         handleTriggerSpecificArea("classB")
       },
       // Step 3: Trigger Exit A
       () => {
         setAutoplayStep(3)
+        sendBackendDemoStep(3, "TRIGGER_EXIT_A", true)
+        syncDemoModeToFirebase(true, 3, "Step 3: South Exit A Compromised — Rerouting to Exit B")
         handleTriggerSpecificArea("exitA")
       },
       // Step 4: Trigger Exit B
       () => {
         setAutoplayStep(4)
+        sendBackendDemoStep(4, "TRIGGER_EXIT_B", true)
+        syncDemoModeToFirebase(true, 4, "Step 4: North Exit B Portal Obstruction Alert")
         handleTriggerSpecificArea("exitB")
       },
       // Step 5: Reset All
       () => {
         setAutoplayStep(5)
+        sendBackendDemoStep(5, "RESET_ALL", false)
+        syncDemoModeToFirebase(false, 0, "Step 5: Evacuation Clear & All Systems Normalized")
         handleResetAll()
       },
     ]
@@ -530,9 +686,11 @@ export default function App() {
       } else {
         setIsAutoplayRunning(false)
         setAutoplayStep(0)
+        sendBackendDemoStep(0, "RESET", false)
+        syncDemoModeToFirebase(false, 0, "Nominal Monitoring")
         if (autoplayTimerRef.current) clearInterval(autoplayTimerRef.current)
       }
-    }, 2800)
+    }, 3200)
 
     return () => {
       if (autoplayTimerRef.current) clearInterval(autoplayTimerRef.current)
@@ -543,6 +701,8 @@ export default function App() {
     if (isAutoplayRunning) {
       setIsAutoplayRunning(false)
       setAutoplayStep(0)
+      sendBackendDemoStep(0, "RESET", false)
+      syncDemoModeToFirebase(false, 0, "Nominal Monitoring")
       handleResetAll()
     } else {
       setIsAutoplayRunning(true)
@@ -567,40 +727,57 @@ export default function App() {
         onChangeViewMode={setViewMode}
       />
 
-      {/* ── 🚨 Firebase Live Emergency Banner ── */}
+      {/* ── 🚨 Live Emergency Incident Feed Banner ── */}
       {emergency.active && (
         <div
           style={{
-            backgroundColor: "#D32F2F",
+            backgroundColor: "#B71C1C",
             color: "#FFFFFF",
-            padding: "12px 24px",
+            padding: "10px 20px",
             fontWeight: "bold",
-            fontSize: "16px",
+            fontSize: "14px",
             textAlign: "center",
-            boxShadow: "0 4px 14px rgba(211,47,47,0.5)",
+            boxShadow: "0 4px 16px rgba(183,28,28,0.6)",
             zIndex: 60,
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
-            gap: "16px",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "12px",
           }}
         >
-          <span>
-            🚨 CAMPUS EMERGENCY ACTIVE! Source: {emergency.node || "REMOTE"} (
-            {emergency.type || "SOS"})
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", textAlign: "left" }}>
+            <span
+              style={{
+                background: "#FF1744",
+                padding: "2px 8px",
+                borderRadius: "4px",
+                fontSize: "11px",
+                letterSpacing: "1px",
+                textTransform: "uppercase",
+              }}
+            >
+              {emergency.event_category || emergency.type || "EMERGENCY"}
+            </span>
+            <span>
+              <strong>Sender:</strong> {emergency.sender_name || emergency.node || "REMOTE"} |{" "}
+              <strong>GPS:</strong> {emergency.lat?.toFixed(4) || "18.5204"},{" "}
+              {emergency.lon?.toFixed(4) || "73.8567"} —{" "}
+              <span style={{ color: "#FFE082" }}>{emergency.message || "Active Alert"}</span>
+            </span>
+          </div>
           <button
             onClick={handleClearAlert}
             style={{
-              padding: "6px 14px",
+              padding: "5px 14px",
               cursor: "pointer",
               background: "#FFFFFF",
-              color: "#D32F2F",
+              color: "#B71C1C",
               border: "none",
               borderRadius: "4px",
               fontWeight: 700,
-              fontSize: "13px",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
+              fontSize: "12px",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
             }}
           >
             Clear Alert
@@ -625,14 +802,14 @@ export default function App() {
               top: 14,
               left: 14,
               zIndex: 30,
-              background: "rgba(4, 11, 20, 0.88)",
+              background: "rgba(4, 11, 20, 0.90)",
               backdropFilter: "blur(8px)",
               border: "1px solid rgba(0,200,180,0.25)",
               color: "#e2e8f0",
               padding: "12px 14px",
               borderRadius: 8,
               boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
-              minWidth: "260px",
+              minWidth: "270px",
             }}
           >
             <div
@@ -662,23 +839,27 @@ export default function App() {
                     width: 7,
                     height: 7,
                     borderRadius: "50%",
-                    background: "#33d19b",
+                    background: backendStreamConnected ? "#33d19b" : "#ffb300",
                   }}
                 />
-                ResQMesh Live Status
+                ResQMesh Live Telemetry
               </h3>
               <span
                 style={{
                   fontSize: "10px",
                   padding: "2px 6px",
-                  background: "rgba(51, 209, 155, 0.15)",
-                  color: "#33d19b",
+                  background: backendStreamConnected
+                    ? "rgba(51, 209, 155, 0.15)"
+                    : "rgba(255, 179, 0, 0.15)",
+                  color: backendStreamConnected ? "#33d19b" : "#ffb300",
                   borderRadius: 4,
-                  border: "1px solid rgba(51, 209, 155, 0.3)",
+                  border: backendStreamConnected
+                    ? "1px solid rgba(51, 209, 155, 0.3)"
+                    : "1px solid rgba(255, 179, 0, 0.3)",
                   fontFamily: "monospace",
                 }}
               >
-                RTDB Online
+                {backendStreamConnected ? "SSE 0ms Push" : "RTDB Sync"}
               </span>
             </div>
 
@@ -702,12 +883,29 @@ export default function App() {
                 liveNodes["Node 3"] ||
                 {}
 
+              const temp1 = n1.temp ?? areas.classA.temperature ?? 22.4
+              const gas1 = n1.gas ?? areas.classA.co2Level ?? 410
+              const temp2 = n2.temp ?? areas.classB.temperature ?? 21.8
+              const gas2 = n2.gas ?? areas.classB.co2Level ?? 395
+              const motion2 =
+                n2.motion !== undefined
+                  ? n2.motion
+                    ? "MOTION"
+                    : "STABLE"
+                  : n2.accelX !== undefined
+                    ? `${n2.accelX}g`
+                    : "0.02g"
+              const people3 =
+                n3.peopleInside ??
+                areas.classA.occupants + areas.classB.occupants ??
+                42
+
               return (
                 <div
                   style={{
                     display: "flex",
                     flexDirection: "column",
-                    gap: 4,
+                    gap: 5,
                     fontSize: "11px",
                     fontFamily: "monospace",
                   }}
@@ -719,15 +917,15 @@ export default function App() {
                       color: "#8ba7b5",
                     }}
                   >
-                    <span>🟢 Node 001</span>
+                    <span>🟢 Node 001 (A)</span>
                     <span>
                       Temp:{" "}
                       <strong style={{ color: "#fff" }}>
-                        {n1.temp ?? "--"}°C
+                        {temp1}°C
                       </strong>{" "}
                       | Gas:{" "}
                       <strong style={{ color: "#fff" }}>
-                        {n1.gas ?? "--"}
+                        {gas1} ppm
                       </strong>
                     </span>
                   </div>
@@ -738,15 +936,19 @@ export default function App() {
                       color: "#8ba7b5",
                     }}
                   >
-                    <span>🔵 Node 002</span>
+                    <span>🔵 Node 002 (B)</span>
                     <span>
-                      Gas:{" "}
+                      Temp:{" "}
                       <strong style={{ color: "#fff" }}>
-                        {n2.gas ?? "--"}
+                        {temp2}°C
+                      </strong>{" "}
+                      | Gas:{" "}
+                      <strong style={{ color: "#fff" }}>
+                        {gas2} ppm
                       </strong>{" "}
                       | Motion:{" "}
                       <strong style={{ color: "#fff" }}>
-                        {n2.accelX ?? "--"}
+                        {motion2}
                       </strong>
                     </span>
                   </div>
@@ -757,11 +959,11 @@ export default function App() {
                       color: "#8ba7b5",
                     }}
                   >
-                    <span>🟠 Node 003</span>
+                    <span>🟠 Node 003 (Exits)</span>
                     <span>
                       People Inside:{" "}
                       <strong style={{ color: "#33d19b" }}>
-                        {n3.peopleInside ?? "0"}
+                        {people3}
                       </strong>
                     </span>
                   </div>

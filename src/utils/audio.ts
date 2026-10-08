@@ -1,4 +1,4 @@
-// Web Audio API sound synthesis for sci-fi alarm and ping effects
+// Web Audio API sound synthesis for sci-fi alarm, ping effects, and voice alerts
 class SoundController {
   private ctx: AudioContext | null = null
   public enabled: boolean = false
@@ -67,6 +67,19 @@ class SoundController {
 
       osc.start()
       osc.stop(ctx.currentTime + 0.35)
+    } catch {
+      // Ignore
+    }
+  }
+
+  public speakVoiceAlert(text: string) {
+    if (!this.enabled || typeof window === "undefined" || !("speechSynthesis" in window)) return
+    try {
+      window.speechSynthesis.cancel()
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.rate = 1.05
+      utterance.pitch = 1.0
+      window.speechSynthesis.speak(utterance)
     } catch {
       // Ignore
     }

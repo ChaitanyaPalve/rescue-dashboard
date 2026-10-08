@@ -1,16 +1,19 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
+import asyncio
+import json
 import time
 
 app = FastAPI(
     title="ResQMesh Command Center API",
-    description="Backend telemetry, AI hazard assessment, and emergency dispatch engine for ResQMesh.",
-    version="2.0.0"
+    description="Backend telemetry, AI hazard assessment, and real-time emergency dispatch engine for ResQMesh & PhoenixNet.",
+    version="2.1.0"
 )
 
-# Enable CORS for Vercel, localhost, and custom frontend domains
+# Enable CORS for Vercel, localhost, and mobile clients
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,12 +22,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Global System State ────────────────────────────────────────────────────────
+# ── Connected Real-Time Clients ────────────────────────────────────────────────
+sse_clients: List[asyncio.Queue] = []
+ws_clients: List[WebSocket] = []
+
+
+# ── Global System State (Unified Schema) ──────────────────────────────────────
 system_state: Dict[str, Any] = {
+    "system_status": "NOMINAL",  # "NOMINAL" or "EMERGENCY_ACTIVE"
+    "demo_mode": {
+        "active": False,
+        "current_step": 0,
+        "description": "Nominal Monitoring"
+    },
     "nodes": {
         "node001": {
             "id": "node001",
-            "name": "Node 1",
+            "name": "Node 1 (Class A)",
             "zone": "Class A",
             "status": "online",
             "temp": 22.4,
@@ -35,18 +49,19 @@ system_state: Dict[str, Any] = {
         },
         "node002": {
             "id": "node002",
-            "name": "Node 2",
+            "name": "Node 2 (Class B)",
             "zone": "Class B",
             "status": "online",
             "temp": 21.8,
             "gas": 395,
             "accelX": 0.02,
+            "motion": False,
             "battery": 95,
             "last_seen": time.time()
         },
         "node003": {
             "id": "node003",
-            "name": "Node 3",
+            "name": "Node 3 (Dual Exit Hub)",
             "zone": "Exits A & B",
             "status": "online",
             "peopleInside": 42,
@@ -55,17 +70,68 @@ system_state: Dict[str, Any] = {
         }
     },
     "exits": {
-        "EXIT_A": {"name": "Exit A (South)", "blocked": False},
-        "EXIT_B": {"name": "Exit B (North)", "blocked": False}
+        "EXIT_A": {
+            "name": "Exit A (South)",
+            "blocked": False,
+            "hazard_type": None
+        },
+        "EXIT_B": {
+            "name": "Exit B (North)",
+            "blocked": False,
+            "hazard_type": None
+        }
     },
     "emergency": {
         "active": False,
         "node": None,
         "type": None,
-        "timestamp": None
+        "event_category": None,  # "smoke", "sos", "co2", "intrusion", "drill"
+        "timestamp": None,
+        "sender_name": None,
+        "lat": 18.5204,
+        "lon": 73.8567,
+        "message": "All sectors safe and nominal."
     },
-    "last_ai_result": None
+    "last_ai_result": {
+        "has_active_emergency": False,
+        "primary_hazard_zone": None,
+        "recommended_safe_exit": "BOTH EXITS OPEN",
+        "risk_assessment": {
+            "Class A": "SAFE",
+            "Class B": "SAFE",
+            "Exit A": "OPEN",
+            "Exit B": "OPEN"
+        },
+        "evacuation_recommendation": {
+            "primary_exit": "EXIT_A (South) & EXIT_B (North) are both safe",
+            "status": "NOMINAL"
+        },
+        "zero_signal_search": {
+            "estimated_unaccounted": 0,
+            "priority_zones": []
+        }
+    }
 }
+
+
+# ── Broadcast State Update to SSE and WebSocket Clients ────────────────────────
+async def broadcast_state_change():
+    payload = json.dumps(system_state)
+    
+    # 1. SSE Queues
+    for queue in list(sse_clients):
+        try:
+            await queue.put(payload)
+        except Exception:
+            sse_clients.remove(queue)
+
+    # 2. WebSockets
+    for ws in list(ws_clients):
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            if ws in ws_clients:
+                ws_clients.remove(ws)
 
 
 # ── Request / Response Models ──────────────────────────────────────────────────
@@ -74,20 +140,35 @@ class TelemetryUpdate(BaseModel):
     temp: Optional[float] = None
     gas: Optional[float] = None
     accelX: Optional[float] = None
+    motion: Optional[bool] = None
     peopleInside: Optional[int] = None
     battery: Optional[int] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
 
 
 class EmergencyEvent(BaseModel):
     active: bool = True
-    node: str = "EXTERNAL"
-    type: str = "SOS"
+    node: str = "WEB_DASHBOARD"
+    type: str = "sos"  # "class_a", "class_b", "exit_a", "exit_b", "both_exits", "sos"
+    event_category: Optional[str] = "smoke"  # "smoke", "sos", "co2", "intrusion", "drill"
     timestamp: Optional[float] = None
+    sender_name: Optional[str] = "Web Command Center"
+    lat: Optional[float] = 18.5204
+    lon: Optional[float] = 73.8567
+    message: Optional[str] = None
+
+
+class DemoStepRequest(BaseModel):
+    active: bool = True
+    step: int = 1
+    action: Optional[str] = "TRIGGER_CLASS_A"
 
 
 class BlockExitRequest(BaseModel):
     exit: str
     blocked: bool
+    hazard_type: Optional[str] = None
 
 
 class AnalyzeRequest(BaseModel):
@@ -95,15 +176,88 @@ class AnalyzeRequest(BaseModel):
     hazard_zone: Optional[str] = None
 
 
+# ── Core AI Risk Assessment Helper ─────────────────────────────────────────────
+def recalculate_ai_risk():
+    has_sos = system_state["emergency"]["active"]
+    node_str = str(system_state["emergency"]["node"] or "").lower()
+    type_str = str(system_state["emergency"]["type"] or "").lower()
+    category = system_state["emergency"]["event_category"] or "smoke"
+
+    hazard_zone = None
+    if "node001" in node_str or "1" in node_str or "class_a" in type_str:
+        hazard_zone = "Class A"
+    elif "node002" in node_str or "2" in node_str or "class_b" in type_str:
+        hazard_zone = "Class B"
+    elif "exit" in node_str or "exit" in type_str:
+        hazard_zone = "Exit Portals"
+    elif has_sos:
+        hazard_zone = "Class A"
+
+    exit_a_blocked = system_state["exits"]["EXIT_A"]["blocked"]
+    exit_b_blocked = system_state["exits"]["EXIT_B"]["blocked"]
+
+    # Recommended evacuation route
+    if exit_a_blocked and exit_b_blocked:
+        recommended = "CRITICAL: ALL EXITS COMPROMISED — SEEK SHELTER IN PLACE"
+        rec_exit = "NONE"
+    elif exit_a_blocked:
+        recommended = "EVACUATE VIA EXIT_B (North Emergency Portal)"
+        rec_exit = "EXIT_B"
+    elif exit_b_blocked:
+        recommended = "EVACUATE VIA EXIT_A (South Emergency Portal)"
+        rec_exit = "EXIT_A"
+    elif hazard_zone == "Class A":
+        recommended = "EVACUATE EAST WING VIA EXIT_B (Avoid West Corridor)"
+        rec_exit = "EXIT_B"
+    elif hazard_zone == "Class B":
+        recommended = "EVACUATE WEST WING VIA EXIT_A (Avoid East Corridor)"
+        rec_exit = "EXIT_A"
+    else:
+        recommended = "ALL EXITS OPERATIONAL"
+        rec_exit = "EXIT_A & EXIT_B"
+
+    ai_result = {
+        "has_active_emergency": has_sos,
+        "primary_hazard_zone": hazard_zone,
+        "recommended_safe_exit": rec_exit,
+        "risk_assessment": {
+            "Class A": "HAZARD" if hazard_zone == "Class A" else "SAFE",
+            "Class B": "HAZARD" if hazard_zone == "Class B" else "SAFE",
+            "Exit A": "BLOCKED" if exit_a_blocked else "OPEN",
+            "Exit B": "BLOCKED" if exit_b_blocked else "OPEN"
+        },
+        "evacuation_recommendation": {
+            "primary_exit": recommended,
+            "status": "CRITICAL" if (exit_a_blocked and exit_b_blocked) else ("WARNING" if has_sos else "NOMINAL")
+        },
+        "zero_signal_search": {
+            "estimated_unaccounted": 14 if has_sos else 0,
+            "priority_zones": [hazard_zone] if hazard_zone else []
+        }
+    }
+
+    system_state["last_ai_result"] = ai_result
+    return ai_result
+
+
 # ── API Endpoints ─────────────────────────────────────────────────────────────
 
 @app.get("/")
 def root():
     return {
-        "service": "ResQMesh AI Command Center Backend",
+        "service": "ResQMesh AI Command Center & PhoenixNet Mobile Sync API",
         "status": "online",
-        "documentation": "/docs",
-        "health": "/health"
+        "system_status": system_state["system_status"],
+        "endpoints": {
+            "state": "/api/state",
+            "stream_sse": "/api/stream",
+            "websocket": "/ws",
+            "telemetry": "POST /api/telemetry",
+            "emergency": "POST /api/emergency",
+            "demo": "POST /api/demo",
+            "reset": "POST /api/reset",
+            "docs": "/docs"
+        }
     }
 
 
@@ -113,8 +267,11 @@ def health():
     return {
         "status": "ok",
         "timestamp": time.time(),
-        "service": "resq-backend",
-        "nodes_online": len(system_state["nodes"])
+        "service": "resq-mesh-backend",
+        "system_status": system_state["system_status"],
+        "nodes_online": len(system_state["nodes"]),
+        "sse_subscribers": len(sse_clients),
+        "ws_subscribers": len(ws_clients)
     }
 
 
@@ -123,119 +280,350 @@ def get_state():
     return system_state
 
 
+# ── Real-Time Server-Sent Events (SSE) Push Stream ────────────────────────────
+@app.get("/api/stream")
+async def event_stream(request: Request):
+    """
+    Server-Sent Events endpoint providing 0ms push updates to Web & Mobile clients.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    sse_clients.append(queue)
+
+    async def event_generator():
+        # Send initial full state immediately
+        initial = json.dumps(system_state)
+        yield f"event: state\ndata: {initial}\n\n"
+
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    # Wait for state change or send heartbeat every 15 seconds
+                    data = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield f"event: state\ndata: {data}\n\n"
+                except asyncio.TimeoutError:
+                    yield f": heartbeat {time.time()}\n\n"
+        finally:
+            if queue in sse_clients:
+                sse_clients.remove(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+# ── WebSocket Real-Time Stream ─────────────────────────────────────────────────
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    ws_clients.append(websocket)
+    try:
+        # Send initial state
+        await websocket.send_text(json.dumps(system_state))
+        while True:
+            # Keep connection open and accept any incoming client messages
+            msg = await websocket.receive_text()
+            try:
+                parsed = json.loads(msg)
+                if parsed.get("action") == "PING":
+                    await websocket.send_text(json.dumps({"action": "PONG", "time": time.time()}))
+            except Exception:
+                pass
+    except WebSocketDisconnect:
+        if websocket in ws_clients:
+            ws_clients.remove(websocket)
+
+
+# ── 1. Telemetry Ingestion ────────────────────────────────────────────────────
 @app.post("/api/telemetry")
-def update_telemetry(payload: TelemetryUpdate):
-    nid = payload.node_id.lower()
+async def update_telemetry(payload: TelemetryUpdate):
+    nid = payload.node_id.lower().replace("-", "").replace(" ", "")
+    # Normalize ID to node001, node002, node003
+    if nid in ["node1", "1"]:
+        nid = "node001"
+    elif nid in ["node2", "2"]:
+        nid = "node002"
+    elif nid in ["node3", "3"]:
+        nid = "node003"
+
     if nid not in system_state["nodes"]:
         system_state["nodes"][nid] = {
-            "id": payload.node_id,
+            "id": nid,
             "name": f"Node {payload.node_id}",
-            "zone": "Dynamic",
+            "zone": "Dynamic Sensor",
             "status": "online",
+            "temp": 22.0,
+            "gas": 400,
+            "motion": False,
+            "battery": 90,
             "last_seen": time.time()
         }
-    
+
     node = system_state["nodes"][nid]
     if payload.temp is not None:
-        node["temp"] = payload.temp
+        node["temp"] = round(payload.temp, 1)
     if payload.gas is not None:
-        node["gas"] = payload.gas
+        node["gas"] = round(payload.gas, 1)
     if payload.accelX is not None:
-        node["accelX"] = payload.accelX
+        node["accelX"] = round(payload.accelX, 3)
+    if payload.motion is not None:
+        node["motion"] = payload.motion
     if payload.peopleInside is not None:
         node["peopleInside"] = payload.peopleInside
     if payload.battery is not None:
         node["battery"] = payload.battery
     node["last_seen"] = time.time()
 
-    return {"ok": True, "node": node}
+    await broadcast_state_change()
+    return {"ok": True, "node": node, "system_status": system_state["system_status"]}
 
 
+# ── 2. Emergency Trigger / SOS Dispatch ───────────────────────────────────────
 @app.post("/api/emergency")
-def set_emergency(event: EmergencyEvent):
+async def set_emergency(event: EmergencyEvent):
+    category = event.event_category or "smoke"
+    node_id = event.node or "node001"
+    evt_type = (event.type or "sos").lower()
+
+    system_state["system_status"] = "EMERGENCY_ACTIVE" if event.active else "NOMINAL"
     system_state["emergency"] = {
         "active": event.active,
-        "node": event.node,
-        "type": event.type,
-        "timestamp": event.timestamp or time.time()
+        "node": node_id,
+        "type": evt_type,
+        "event_category": category,
+        "timestamp": event.timestamp or time.time(),
+        "sender_name": event.sender_name or "Command Center",
+        "lat": event.lat or 18.5204,
+        "lon": event.lon or 73.8567,
+        "message": event.message or f"🚨 {category.upper()} alert triggered by {node_id}"
     }
-    return {"ok": True, "emergency": system_state["emergency"]}
 
+    # Apply Mandatory Exit Blockage Rules based on trigger origin
+    if event.active:
+        if "class_a" in evt_type or "node001" in node_id.lower() or "1" in node_id:
+            system_state["exits"]["EXIT_A"]["blocked"] = True
+            system_state["exits"]["EXIT_A"]["hazard_type"] = category
+            # Elevate Class A sensors
+            system_state["nodes"]["node001"]["temp"] = max(system_state["nodes"]["node001"].get("temp", 22), 48.5)
+            system_state["nodes"]["node001"]["gas"] = max(system_state["nodes"]["node001"].get("gas", 400), 920)
 
-@app.post("/api/emergency/clear")
-def clear_emergency():
-    system_state["emergency"] = {
-        "active": False,
-        "node": "DASHBOARD",
-        "type": "CLEAR",
-        "timestamp": time.time()
-    }
-    return {"ok": True, "emergency": system_state["emergency"]}
+        elif "class_b" in evt_type or "node002" in node_id.lower() or "2" in node_id:
+            system_state["exits"]["EXIT_B"]["blocked"] = True
+            system_state["exits"]["EXIT_B"]["hazard_type"] = category
+            # Elevate Class B sensors
+            system_state["nodes"]["node002"]["temp"] = max(system_state["nodes"]["node002"].get("temp", 22), 45.0)
+            system_state["nodes"]["node002"]["gas"] = max(system_state["nodes"]["node002"].get("gas", 400), 880)
 
-
-@app.post("/api/block-exit")
-def block_exit(req: BlockExitRequest):
-    key = req.exit.upper()
-    if key in system_state["exits"]:
-        system_state["exits"][key]["blocked"] = req.blocked
-        return {"ok": True, "exit": system_state["exits"][key]}
-    raise HTTPException(status_code=404, detail=f"Exit {req.exit} not found.")
-
-
-@app.post("/api/analyze")
-def run_ai_analysis(req: AnalyzeRequest):
-    has_sos = len(req.sos or []) > 0 or system_state["emergency"]["active"]
-    hazard_zone = req.hazard_zone or (
-        "A" if "1" in str(system_state["emergency"]["node"]) else
-        "B" if "2" in str(system_state["emergency"]["node"]) else
-        "A" if has_sos else None
-    )
-
-    exit_a_blocked = system_state["exits"]["EXIT_A"]["blocked"]
-    exit_b_blocked = system_state["exits"]["EXIT_B"]["blocked"]
-
-    # Recommended evacuation portal
-    if not exit_b_blocked and (hazard_zone == "A" or exit_a_blocked):
-        recommended_exit = "EXIT_B (North Portal)"
-    elif not exit_a_blocked:
-        recommended_exit = "EXIT_A (South Portal)"
+        elif "both" in evt_type or "both_exits" in evt_type:
+            system_state["exits"]["EXIT_A"]["blocked"] = True
+            system_state["exits"]["EXIT_A"]["hazard_type"] = category
+            system_state["exits"]["EXIT_B"]["blocked"] = True
+            system_state["exits"]["EXIT_B"]["hazard_type"] = category
     else:
-        recommended_exit = "WARNING: ALL EXITS COMPROMISED - SEEK REFUGE"
+        # If cleared
+        system_state["exits"]["EXIT_A"]["blocked"] = False
+        system_state["exits"]["EXIT_A"]["hazard_type"] = None
+        system_state["exits"]["EXIT_B"]["blocked"] = False
+        system_state["exits"]["EXIT_B"]["hazard_type"] = None
 
-    ai_result = {
+    recalculate_ai_risk()
+    await broadcast_state_change()
+
+    return {
         "ok": True,
-        "timestamp": time.time(),
-        "has_active_emergency": has_sos,
-        "primary_hazard_zone": hazard_zone,
-        "risk_assessment": {
-            "Class A": "HIGH" if hazard_zone == "A" else "SAFE",
-            "Class B": "HIGH" if hazard_zone == "B" else "SAFE",
-            "Exit A": "BLOCKED" if exit_a_blocked else "OPEN",
-            "Exit B": "BLOCKED" if exit_b_blocked else "OPEN"
-        },
-        "evacuation_recommendation": {
-            "primary_exit": recommended_exit,
-            "status": "CRITICAL" if has_sos else "NOMINAL"
-        },
-        "zero_signal_search": {
-            "estimated_unaccounted": 18 if has_sos else 0,
-            "priority_zones": [hazard_zone] if hazard_zone else []
-        }
+        "system_status": system_state["system_status"],
+        "emergency": system_state["emergency"],
+        "exits": system_state["exits"],
+        "last_ai_result": system_state["last_ai_result"]
     }
 
-    system_state["last_ai_result"] = ai_result
-    return ai_result
+
+# ── 3. Automated Demo Progression ─────────────────────────────────────────────
+@app.post("/api/demo")
+async def handle_demo_progression(req: DemoStepRequest):
+    step = req.step
+    is_active = req.active
+
+    step_descriptions = {
+        0: "Nominal Baseline Monitoring",
+        1: "Step 1: Smoke Hazard Detected in Class A (Node 1)",
+        2: "Step 2: Air Quality Spike in Class B Lab (Node 2)",
+        3: "Step 3: South Exit A Compromised — Rerouting to Exit B",
+        4: "Step 4: North Exit B Portal Obstruction Alert",
+        5: "Step 5: Evacuation Clear & All Systems Normalized"
+    }
+
+    system_state["demo_mode"] = {
+        "active": is_active,
+        "current_step": step,
+        "description": step_descriptions.get(step, f"Demo Step {step}")
+    }
+
+    if not is_active or step == 0 or step == 5:
+        # Reset to safe nominal
+        system_state["system_status"] = "NOMINAL"
+        system_state["emergency"]["active"] = False
+        system_state["exits"]["EXIT_A"]["blocked"] = False
+        system_state["exits"]["EXIT_A"]["hazard_type"] = None
+        system_state["exits"]["EXIT_B"]["blocked"] = False
+        system_state["exits"]["EXIT_B"]["hazard_type"] = None
+        system_state["nodes"]["node001"]["temp"] = 22.4
+        system_state["nodes"]["node001"]["gas"] = 410
+        system_state["nodes"]["node002"]["temp"] = 21.8
+        system_state["nodes"]["node002"]["gas"] = 395
+    elif step == 1:
+        # Trigger Class A
+        system_state["system_status"] = "EMERGENCY_ACTIVE"
+        system_state["emergency"] = {
+            "active": True,
+            "node": "node001",
+            "type": "class_a",
+            "event_category": "smoke",
+            "timestamp": time.time(),
+            "sender_name": "Class A Sentinel (Node 1)",
+            "lat": 18.5204,
+            "lon": 73.8567,
+            "message": "🔥 Smoke Alarm Triggered in West Wing Class A"
+        }
+        system_state["exits"]["EXIT_A"]["blocked"] = True
+        system_state["exits"]["EXIT_A"]["hazard_type"] = "smoke"
+        system_state["nodes"]["node001"]["temp"] = 48.2
+        system_state["nodes"]["node001"]["gas"] = 890
+    elif step == 2:
+        # Trigger Class B
+        system_state["system_status"] = "EMERGENCY_ACTIVE"
+        system_state["emergency"] = {
+            "active": True,
+            "node": "node002",
+            "type": "class_b",
+            "event_category": "co2",
+            "timestamp": time.time(),
+            "sender_name": "Class B Sentinel (Node 2)",
+            "lat": 18.5208,
+            "lon": 73.8572,
+            "message": "☣️ CO2 Air Hazard Spike in East Wing Lab"
+        }
+        system_state["exits"]["EXIT_B"]["blocked"] = True
+        system_state["exits"]["EXIT_B"]["hazard_type"] = "co2"
+        system_state["nodes"]["node002"]["temp"] = 44.5
+        system_state["nodes"]["node002"]["gas"] = 1150
+    elif step == 3:
+        # Exit A Hazard
+        system_state["system_status"] = "EMERGENCY_ACTIVE"
+        system_state["emergency"] = {
+            "active": True,
+            "node": "node003",
+            "type": "exit_a",
+            "event_category": "sos",
+            "timestamp": time.time(),
+            "sender_name": "Dual Exit Controller (Node 3)",
+            "lat": 18.5201,
+            "lon": 73.8562,
+            "message": "⚠️ South Emergency Portal (Exit A) Blocked"
+        }
+        system_state["exits"]["EXIT_A"]["blocked"] = True
+        system_state["exits"]["EXIT_A"]["hazard_type"] = "sos"
+    elif step == 4:
+        # Both Exits Hazard
+        system_state["system_status"] = "EMERGENCY_ACTIVE"
+        system_state["emergency"] = {
+            "active": True,
+            "node": "node003",
+            "type": "both_exits",
+            "event_category": "drill",
+            "timestamp": time.time(),
+            "sender_name": "Dual Exit Controller (Node 3)",
+            "lat": 18.5209,
+            "lon": 73.8565,
+            "message": "🚨 Dual Exit Alert — Evacuation Corridor Congestion"
+        }
+        system_state["exits"]["EXIT_A"]["blocked"] = True
+        system_state["exits"]["EXIT_A"]["hazard_type"] = "drill"
+        system_state["exits"]["EXIT_B"]["blocked"] = True
+        system_state["exits"]["EXIT_B"]["hazard_type"] = "drill"
+
+    recalculate_ai_risk()
+    await broadcast_state_change()
+
+    return {
+        "ok": True,
+        "demo_mode": system_state["demo_mode"],
+        "system_status": system_state["system_status"],
+        "emergency": system_state["emergency"],
+        "exits": system_state["exits"],
+        "last_ai_result": system_state["last_ai_result"]
+    }
 
 
+# ── 4. Clear Emergency / Reset System ─────────────────────────────────────────
+@app.post("/api/emergency/clear")
 @app.post("/api/reset")
-def reset_system():
+async def reset_system():
+    system_state["system_status"] = "NOMINAL"
+    system_state["demo_mode"] = {
+        "active": False,
+        "current_step": 0,
+        "description": "Nominal Baseline Monitoring"
+    }
     system_state["emergency"] = {
         "active": False,
         "node": None,
         "type": None,
-        "timestamp": None
+        "event_category": None,
+        "timestamp": None,
+        "sender_name": None,
+        "lat": 18.5204,
+        "lon": 73.8567,
+        "message": "All sectors safe and nominal."
     }
     system_state["exits"]["EXIT_A"]["blocked"] = False
+    system_state["exits"]["EXIT_A"]["hazard_type"] = None
     system_state["exits"]["EXIT_B"]["blocked"] = False
-    system_state["last_ai_result"] = None
-    return {"ok": True, "message": "System restored to safe nominal state"}
+    system_state["exits"]["EXIT_B"]["hazard_type"] = None
+
+    # Reset sensor telemetry to clean baseline
+    system_state["nodes"]["node001"]["temp"] = 22.4
+    system_state["nodes"]["node001"]["gas"] = 410
+    system_state["nodes"]["node001"]["motion"] = False
+    system_state["nodes"]["node002"]["temp"] = 21.8
+    system_state["nodes"]["node002"]["gas"] = 395
+    system_state["nodes"]["node002"]["accelX"] = 0.02
+    system_state["nodes"]["node002"]["motion"] = False
+    system_state["nodes"]["node003"]["peopleInside"] = 42
+
+    recalculate_ai_risk()
+    await broadcast_state_change()
+
+    return {
+        "ok": True,
+        "message": "System normalized. All exits open and safe.",
+        "system_status": "NOMINAL",
+        "state": system_state
+    }
+
+
+# ── 5. Manual Exit Blockage Toggle ────────────────────────────────────────────
+@app.post("/api/block-exit")
+async def block_exit(req: BlockExitRequest):
+    key = req.exit.upper()
+    if key in system_state["exits"]:
+        system_state["exits"][key]["blocked"] = req.blocked
+        system_state["exits"][key]["hazard_type"] = req.hazard_type if req.blocked else None
+        recalculate_ai_risk()
+        await broadcast_state_change()
+        return {"ok": True, "exit": system_state["exits"][key], "last_ai_result": system_state["last_ai_result"]}
+    raise HTTPException(status_code=404, detail=f"Exit {req.exit} not found.")
+
+
+# ── 6. AI Evacuation Route Calculation ─────────────────────────────────────────
+@app.post("/api/analyze")
+def run_ai_analysis(req: AnalyzeRequest):
+    result = recalculate_ai_risk()
+    return {"ok": True, "timestamp": time.time(), **result}
