@@ -417,43 +417,59 @@ export default function App() {
       console.log("📊 Live Telemetry Data:", nodesData)
       if (nodesData) {
         setLiveNodes(nodesData)
+        const n1 =
+          nodesData.node001 ||
+          nodesData.node1 ||
+          nodesData["node-1"] ||
+          nodesData["Node 1"] ||
+          nodesData.Node1
+        const n2 =
+          nodesData.node002 ||
+          nodesData.node2 ||
+          nodesData["node-2"] ||
+          nodesData["Node 2"] ||
+          nodesData.Node2
+        const n3 =
+          nodesData.node003 ||
+          nodesData.node3 ||
+          nodesData["node-3"] ||
+          nodesData["Node 3"] ||
+          nodesData.Node3
+
         setAreas((prev) => {
           const next = { ...prev }
-          if (nodesData.node001) {
-            if (nodesData.node001.temp !== undefined) {
+          if (n1) {
+            if (n1.temp !== undefined) {
               next.classA = {
                 ...next.classA,
-                temperature: Number(nodesData.node001.temp),
+                temperature: Number(n1.temp),
               }
             }
-            if (nodesData.node001.gas !== undefined) {
+            if (n1.gas !== undefined) {
               next.classA = {
                 ...next.classA,
-                co2Level: Number(nodesData.node001.gas),
+                co2Level: Number(n1.gas),
               }
             }
           }
-          if (nodesData.node002) {
-            if (nodesData.node002.temp !== undefined) {
+          if (n2) {
+            if (n2.temp !== undefined) {
               next.classB = {
                 ...next.classB,
-                temperature: Number(nodesData.node002.temp),
+                temperature: Number(n2.temp),
               }
             }
-            if (nodesData.node002.gas !== undefined) {
+            if (n2.gas !== undefined) {
               next.classB = {
                 ...next.classB,
-                co2Level: Number(nodesData.node002.gas),
+                co2Level: Number(n2.gas),
               }
             }
           }
-          if (
-            nodesData.node003 &&
-            nodesData.node003.peopleInside !== undefined
-          ) {
+          if (n3 && n3.peopleInside !== undefined) {
             next.exitA = {
               ...next.exitA,
-              occupants: Number(nodesData.node003.peopleInside),
+              occupants: Number(n3.peopleInside),
             }
           }
           return next
@@ -666,69 +682,92 @@ export default function App() {
               </span>
             </div>
 
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                fontSize: "11px",
-                fontFamily: "monospace",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  color: "#8ba7b5",
-                }}
-              >
-                <span>🟢 Node 001</span>
-                <span>
-                  Temp:{" "}
-                  <strong style={{ color: "#fff" }}>
-                    {liveNodes.node001?.temp ?? "--"}°C
-                  </strong>{" "}
-                  | Gas:{" "}
-                  <strong style={{ color: "#fff" }}>
-                    {liveNodes.node001?.gas ?? "--"}
-                  </strong>
-                </span>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  color: "#8ba7b5",
-                }}
-              >
-                <span>🔵 Node 002</span>
-                <span>
-                  Gas:{" "}
-                  <strong style={{ color: "#fff" }}>
-                    {liveNodes.node002?.gas ?? "--"}
-                  </strong>{" "}
-                  | Motion:{" "}
-                  <strong style={{ color: "#fff" }}>
-                    {liveNodes.node002?.accelX ?? "--"}
-                  </strong>
-                </span>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  color: "#8ba7b5",
-                }}
-              >
-                <span>🟠 Node 003</span>
-                <span>
-                  People Inside:{" "}
-                  <strong style={{ color: "#33d19b" }}>
-                    {liveNodes.node003?.peopleInside ?? "0"}
-                  </strong>
-                </span>
-              </div>
-            </div>
+            {(() => {
+              const n1 =
+                liveNodes.node001 ||
+                liveNodes.node1 ||
+                liveNodes["node-1"] ||
+                liveNodes["Node 1"] ||
+                {}
+              const n2 =
+                liveNodes.node002 ||
+                liveNodes.node2 ||
+                liveNodes["node-2"] ||
+                liveNodes["Node 2"] ||
+                {}
+              const n3 =
+                liveNodes.node003 ||
+                liveNodes.node3 ||
+                liveNodes["node-3"] ||
+                liveNodes["Node 3"] ||
+                {}
+
+              return (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    fontSize: "11px",
+                    fontFamily: "monospace",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      color: "#8ba7b5",
+                    }}
+                  >
+                    <span>🟢 Node 001</span>
+                    <span>
+                      Temp:{" "}
+                      <strong style={{ color: "#fff" }}>
+                        {n1.temp ?? "--"}°C
+                      </strong>{" "}
+                      | Gas:{" "}
+                      <strong style={{ color: "#fff" }}>
+                        {n1.gas ?? "--"}
+                      </strong>
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      color: "#8ba7b5",
+                    }}
+                  >
+                    <span>🔵 Node 002</span>
+                    <span>
+                      Gas:{" "}
+                      <strong style={{ color: "#fff" }}>
+                        {n2.gas ?? "--"}
+                      </strong>{" "}
+                      | Motion:{" "}
+                      <strong style={{ color: "#fff" }}>
+                        {n2.accelX ?? "--"}
+                      </strong>
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      color: "#8ba7b5",
+                    }}
+                  >
+                    <span>🟠 Node 003</span>
+                    <span>
+                      People Inside:{" "}
+                      <strong style={{ color: "#33d19b" }}>
+                        {n3.peopleInside ?? "0"}
+                      </strong>
+                    </span>
+                  </div>
+                </div>
+              )
+            })()}
 
             <button
               onClick={handleTriggerWebSOS}
