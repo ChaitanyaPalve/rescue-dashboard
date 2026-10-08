@@ -24,7 +24,7 @@ export default function SystemHeader({
     isClassBTriggered ? { name: "Class B", node: "Node 2" } : null,
     isExitATriggered ? { name: "Exit A", node: "Node 3" } : null,
     isExitBTriggered ? { name: "Exit B", node: "Node 3" } : null,
-  ].filter(Boolean) as { name: string node: string }[]
+  ].filter(Boolean) as { name: string; node: string }[]
 
   const anyTriggered = triggeredAreas.length > 0
   const nodesCount = nodes.length

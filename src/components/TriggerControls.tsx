@@ -38,7 +38,7 @@ export default function TriggerControls({
   const isExitBTriggered = areas.exitB.isTriggered
   const areBothExitsTriggered = isExitATriggered && isExitBTriggered
 
-  const triggerTypes: { id: TriggerType label: string icon: string }[] = [
+  const triggerTypes: { id: TriggerType; label: string; icon: string }[] = [
     { id: "fire", label: "Smoke / Fire Alarm", icon: "🔥" },
     { id: "sos", label: "Emergency SOS Pull", icon: "🆘" },
     { id: "co2", label: "CO₂ Air Hazard Spike", icon: "💨" },

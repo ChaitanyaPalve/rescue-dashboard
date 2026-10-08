@@ -16,7 +16,7 @@ const WH = 34 // Wall height
 const CX = 370 // SVG Center X
 const CY = 75 // SVG Origin Y (North apex)
 
-type Pt = { x: number y: number }
+type Pt = { x: number; y: number }
 
 const iso = (wx: number, wy: number, wz = 0): Pt => ({
   x: CX + (wx - wy) * HTW,
