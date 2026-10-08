@@ -14,6 +14,12 @@ import TriggerControls from "./components/TriggerControls"
 import AuditPanel from "./components/AuditPanel"
 import EventLogPanel from "./components/EventLogPanel"
 import { soundController } from "./utils/audio"
+import {
+  subscribeToNodes,
+  subscribeToEmergency,
+  triggerWebEmergency,
+  clearWebEmergency,
+} from "./firebase-sync"
 
 const now = () => {
   const d = new Date()
@@ -113,6 +119,22 @@ export default function App() {
   const [isSoundEnabled, setIsSoundEnabled] = useState(false)
   const [isAutoplayRunning, setIsAutoplayRunning] = useState(false)
   const [autoplayStep, setAutoplayStep] = useState(0)
+  const [emergency, setEmergency] = useState<{
+    active?: boolean
+    node?: string
+    type?: string
+    timestamp?: number
+  }>({ active: false })
+  const [liveNodes, setLiveNodes] = useState<{
+    node001?: { temp?: number | string; gas?: number | string }
+    node002?: {
+      gas?: number | string
+      accelX?: number | string
+      temp?: number | string
+    }
+    node003?: { peopleInside?: number | string }
+    [key: string]: any
+  }>({})
 
   // ── 4. Audit & Event Logs ───────────────────────────────────────────────────
   const [logs, setLogs] = useState<LogEntry[]>([
@@ -330,11 +352,120 @@ export default function App() {
     })
 
     soundController.playResetSound()
+    clearWebEmergency()
+    setEmergency({ active: false })
     addLog(
       "🔄 System Reset: All triggers cleared. All areas returned to UNCHANGED (Safe) status.",
       "info",
     )
   }
+
+  // ── Trigger Web SOS to Firebase ─────────────────────────────────────────────
+  const handleTriggerWebSOS = () => {
+    triggerWebEmergency("CAMPUS_WEB", "SOS")
+    handleTriggerSpecificArea("classA")
+  }
+
+  const handleClearAlert = () => {
+    clearWebEmergency()
+    handleResetAll()
+  }
+
+  // ── Firebase Realtime Subscriptions ─────────────────────────────────────────
+  useEffect(() => {
+    // 1. Subscribe to live SOS alerts
+    const unsubscribeEmergency = subscribeToEmergency((emergencyData) => {
+      console.log("🚨 Live Emergency Event:", emergencyData)
+      const data = emergencyData || { active: false }
+      setEmergency(data)
+
+      if (data.active) {
+        soundController.playAlertSound()
+        addLog(
+          `🚨 FIREBASE EMERGENCY: Active from ${data.node || "REMOTE"} (${data.type || "SOS"})`,
+          "error",
+        )
+        const nodeStr = (data.node || "").toLowerCase()
+        if (
+          nodeStr.includes("node001") ||
+          nodeStr.includes("node 1") ||
+          nodeStr.includes("classa")
+        ) {
+          handleTriggerSpecificArea("classA")
+        } else if (
+          nodeStr.includes("node002") ||
+          nodeStr.includes("node 2") ||
+          nodeStr.includes("classb")
+        ) {
+          handleTriggerSpecificArea("classB")
+        } else if (
+          nodeStr.includes("node003") ||
+          nodeStr.includes("node 3") ||
+          nodeStr.includes("exit")
+        ) {
+          handleTriggerBothExits()
+        } else {
+          handleTriggerSpecificArea("classA")
+        }
+      } else {
+        addLog("✔ Firebase RTDB: Emergency status normal/cleared.", "info")
+      }
+    })
+
+    // 2. Subscribe to live sensor telemetry from ResQMesh Android nodes
+    const unsubscribeNodes = subscribeToNodes((nodesData) => {
+      console.log("📊 Live Telemetry Data:", nodesData)
+      if (nodesData) {
+        setLiveNodes(nodesData)
+        setAreas((prev) => {
+          const next = { ...prev }
+          if (nodesData.node001) {
+            if (nodesData.node001.temp !== undefined) {
+              next.classA = {
+                ...next.classA,
+                temperature: Number(nodesData.node001.temp),
+              }
+            }
+            if (nodesData.node001.gas !== undefined) {
+              next.classA = {
+                ...next.classA,
+                co2Level: Number(nodesData.node001.gas),
+              }
+            }
+          }
+          if (nodesData.node002) {
+            if (nodesData.node002.temp !== undefined) {
+              next.classB = {
+                ...next.classB,
+                temperature: Number(nodesData.node002.temp),
+              }
+            }
+            if (nodesData.node002.gas !== undefined) {
+              next.classB = {
+                ...next.classB,
+                co2Level: Number(nodesData.node002.gas),
+              }
+            }
+          }
+          if (
+            nodesData.node003 &&
+            nodesData.node003.peopleInside !== undefined
+          ) {
+            next.exitA = {
+              ...next.exitA,
+              occupants: Number(nodesData.node003.peopleInside),
+            }
+          }
+          return next
+        })
+      }
+    })
+
+    return () => {
+      unsubscribeEmergency()
+      unsubscribeNodes()
+    }
+  }, [])
 
   // ── Autoplay Sequential Verification Demo ───────────────────────────────────
   const autoplayTimerRef = useRef<NodeJS.Timeout | null>(null)
@@ -420,6 +551,47 @@ export default function App() {
         onChangeViewMode={setViewMode}
       />
 
+      {/* ── 🚨 Firebase Live Emergency Banner ── */}
+      {emergency.active && (
+        <div
+          style={{
+            backgroundColor: "#D32F2F",
+            color: "#FFFFFF",
+            padding: "12px 24px",
+            fontWeight: "bold",
+            fontSize: "16px",
+            textAlign: "center",
+            boxShadow: "0 4px 14px rgba(211,47,47,0.5)",
+            zIndex: 60,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "16px",
+          }}
+        >
+          <span>
+            🚨 CAMPUS EMERGENCY ACTIVE! Source: {emergency.node || "REMOTE"} (
+            {emergency.type || "SOS"})
+          </span>
+          <button
+            onClick={handleClearAlert}
+            style={{
+              padding: "6px 14px",
+              cursor: "pointer",
+              background: "#FFFFFF",
+              color: "#D32F2F",
+              border: "none",
+              borderRadius: "4px",
+              fontWeight: 700,
+              fontSize: "13px",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
+            }}
+          >
+            Clear Alert
+          </button>
+        </div>
+      )}
+
       {/* ── 2. MAIN WORKSPACE CONTENT ── */}
       <div className="flex flex-1 min-h-0 gap-2 p-2">
         {/* Main Display Canvas (Isometric Map, Flow Diagram, or Split) */}
@@ -430,6 +602,158 @@ export default function App() {
             border: "1px solid rgba(0,200,180,0.12)",
           }}
         >
+          {/* 📊 Live Sensor Telemetry Overlay */}
+          <div
+            style={{
+              position: "absolute",
+              top: 14,
+              left: 14,
+              zIndex: 30,
+              background: "rgba(4, 11, 20, 0.88)",
+              backdropFilter: "blur(8px)",
+              border: "1px solid rgba(0,200,180,0.25)",
+              color: "#e2e8f0",
+              padding: "12px 14px",
+              borderRadius: 8,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
+              minWidth: "260px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 8,
+                paddingBottom: 6,
+                borderBottom: "1px solid rgba(0,200,180,0.15)",
+              }}
+            >
+              <h3
+                style={{
+                  margin: 0,
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  color: "#64f5df",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: "#33d19b",
+                  }}
+                />
+                ResQMesh Live Status
+              </h3>
+              <span
+                style={{
+                  fontSize: "10px",
+                  padding: "2px 6px",
+                  background: "rgba(51, 209, 155, 0.15)",
+                  color: "#33d19b",
+                  borderRadius: 4,
+                  border: "1px solid rgba(51, 209, 155, 0.3)",
+                  fontFamily: "monospace",
+                }}
+              >
+                RTDB Online
+              </span>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                fontSize: "11px",
+                fontFamily: "monospace",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  color: "#8ba7b5",
+                }}
+              >
+                <span>🟢 Node 001</span>
+                <span>
+                  Temp:{" "}
+                  <strong style={{ color: "#fff" }}>
+                    {liveNodes.node001?.temp ?? "--"}°C
+                  </strong>{" "}
+                  | Gas:{" "}
+                  <strong style={{ color: "#fff" }}>
+                    {liveNodes.node001?.gas ?? "--"}
+                  </strong>
+                </span>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  color: "#8ba7b5",
+                }}
+              >
+                <span>🔵 Node 002</span>
+                <span>
+                  Gas:{" "}
+                  <strong style={{ color: "#fff" }}>
+                    {liveNodes.node002?.gas ?? "--"}
+                  </strong>{" "}
+                  | Motion:{" "}
+                  <strong style={{ color: "#fff" }}>
+                    {liveNodes.node002?.accelX ?? "--"}
+                  </strong>
+                </span>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  color: "#8ba7b5",
+                }}
+              >
+                <span>🟠 Node 003</span>
+                <span>
+                  People Inside:{" "}
+                  <strong style={{ color: "#33d19b" }}>
+                    {liveNodes.node003?.peopleInside ?? "0"}
+                  </strong>
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={handleTriggerWebSOS}
+              style={{
+                background: "#FF1744",
+                color: "white",
+                border: "none",
+                padding: "8px 12px",
+                borderRadius: 5,
+                cursor: "pointer",
+                marginTop: 10,
+                width: "100%",
+                fontWeight: "bold",
+                fontSize: "12px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                boxShadow: "0 2px 8px rgba(255, 23, 68, 0.4)",
+              }}
+            >
+              🚨 Trigger Web SOS
+            </button>
+          </div>
+
           {viewMode === "isometric" && (
             <div className="w-full h-full flex items-center justify-center p-1">
               <IsoCampusMap
