@@ -171,7 +171,8 @@ async def broadcast_state_change():
 
 # ── Request / Response Models ──────────────────────────────────────────────────
 class TelemetryUpdate(BaseModel):
-    node_id: str
+    node_id: Optional[str] = None
+    id: Optional[str] = None
     temp: Optional[float] = None
     gas: Optional[float] = None
     accelX: Optional[float] = None
@@ -381,7 +382,8 @@ async def websocket_endpoint(websocket: WebSocket):
 # ── 1. Telemetry Ingestion ────────────────────────────────────────────────────
 @app.post("/api/telemetry")
 async def update_telemetry(payload: TelemetryUpdate):
-    raw_nid = payload.node_id.lower().replace("-", "").replace(" ", "").replace("_", "")
+    target_id = payload.node_id or payload.id or "node001"
+    raw_nid = target_id.lower().replace("-", "").replace(" ", "").replace("_", "")
     # Normalize ID to node001, node002, node003
     if raw_nid in ["node1", "1", "node01", "classa"]:
         nid = "node001"
