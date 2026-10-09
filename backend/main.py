@@ -420,8 +420,8 @@ async def update_telemetry(payload: TelemetryUpdate):
         node["battery"] = payload.battery
     node["last_seen"] = time.time()
 
-    # Intelligent sensor threshold hazard detection
-    if (payload.temp is not None and payload.temp >= 45.0) or (payload.gas is not None and payload.gas >= 800):
+    # Intelligent sensor threshold hazard detection (Gas threshold: 1200 to avoid pre-heat false alarms)
+    if (payload.temp is not None and payload.temp >= 45.0) or (payload.gas is not None and payload.gas >= 1200):
         system_state["system_status"] = "EMERGENCY_ACTIVE"
         hazard_cat = "smoke" if (payload.temp is not None and payload.temp >= 45.0) else "co2"
         if nid == "node001":
