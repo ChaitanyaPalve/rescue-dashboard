@@ -27,6 +27,8 @@ import {
   sendBackendDemoStep,
   resetBackendSystem,
   subscribeToBackendStream,
+  blockBackendExit,
+  fetchSystemState,
 } from "./services/api"
 
 const now = () => {
@@ -159,22 +161,33 @@ export default function App() {
     timestamp?: number
   }>({ active: false })
 
-  // Baseline telemetry defaults so the UI never displays "--" placeholders
+  // Helper to determine if a hardware node is actively streaming live telemetry (within 90s)
+  const isNodeOnline = (node?: any): boolean => {
+    if (!node) return false
+    if (node.status === "offline" || node.status === "disconnected") return false
+    if (!node.last_seen) return false
+    const lastSeenMs =
+      typeof node.last_seen === "number" && node.last_seen < 1e11
+        ? node.last_seen * 1000
+        : Number(node.last_seen)
+    if (isNaN(lastSeenMs) || lastSeenMs <= 0) return false
+    return Date.now() - lastSeenMs < 90 * 1000
+  }
+
+  // Live telemetry nodes — starts EMPTY without hardcoded fallback values
   const [liveNodes, setLiveNodes] = useState<{
-    node001?: { temp?: number | string; gas?: number | string; motion?: boolean }
-    node002?: {
-      gas?: number | string
-      accelX?: number | string
-      temp?: number | string
-      motion?: boolean
-    }
-    node003?: { peopleInside?: number | string }
+    node001?: { temp?: number; gas?: number; motion?: boolean; battery?: number; status?: string; last_seen?: number }
+    node002?: { temp?: number; gas?: number; accelX?: number; motion?: boolean; battery?: number; status?: string; last_seen?: number }
+    node003?: { peopleInside?: number; battery?: number; status?: string; last_seen?: number }
     [key: string]: any
-  }>({
-    node001: { temp: 22.4, gas: 410, motion: false },
-    node002: { temp: 21.8, gas: 395, accelX: 0.02, motion: false },
-    node003: { peopleInside: 42 },
-  })
+  }>({})
+
+  // Tick state to re-evaluate connectivity timeouts every 5 seconds
+  const [nowTick, setNowTick] = useState(Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNowTick(Date.now()), 5000)
+    return () => clearInterval(timer)
+  }, [])
 
   // ── 4. Audit & Event Logs ───────────────────────────────────────────────────
   const [logs, setLogs] = useState<LogEntry[]>([
@@ -188,8 +201,8 @@ export default function App() {
     {
       id: "2",
       time: now(),
-      message: "Telemetry Nodes 1, 2, 3 online. 0ms Push stream listening.",
-      kind: "success",
+      message: "Telemetry Sentinel listening. Awaiting live hardware transmissions.",
+      kind: "info",
     },
   ])
 
@@ -220,20 +233,29 @@ export default function App() {
     addLog(`Audio synthesizer & voice alerts: ${next ? "ENABLED" : "MUTED"}`, "info")
   }
 
-  // ── Sync Node Statuses with Area Trigger States ─────────────────────────────
+  // ── Sync Node Statuses with Area Trigger States & Live Hardware Connectivity ─
   useEffect(() => {
     setNodes((prev) =>
       prev.map((node) => {
         const hasTrigger = node.monitoredAreas.some(
           (aid) => areas[aid].isTriggered,
         )
+        const liveKey =
+          node.id === "node1"
+            ? "node001"
+            : node.id === "node2"
+              ? "node002"
+              : "node003"
+        const liveData = liveNodes[liveKey]
+        const online = isNodeOnline(liveData)
+
         return {
           ...node,
-          status: hasTrigger ? "alert" : "normal",
+          status: hasTrigger ? "alert" : online ? "normal" : "offline",
         }
       }),
     )
-  }, [areas])
+  }, [areas, liveNodes, nowTick])
 
   // ── Trigger Specific Area ───────────────────────────────────────────────────
   const handleTriggerSpecificArea = (areaId: AreaId) => {
@@ -293,11 +315,19 @@ export default function App() {
         node: targetNodeId,
         type: areaId === "classA" ? "class_a" : areaId === "classB" ? "class_b" : areaId,
         event_category: category,
+        event_type: category,
         sender_name: `${current.label} Sentinel`,
         lat: areaId === "classA" ? 18.5204 : areaId === "classB" ? 18.5208 : 18.5201,
         lon: areaId === "classA" ? 73.8567 : areaId === "classB" ? 73.8572 : 73.8562,
         message: alertMsg,
       })
+
+      // Sync backend exit blockages based on zone rules
+      if (areaId === "classA" || areaId === "exitA") {
+        blockBackendExit("EXIT_A", true, category)
+      } else if (areaId === "classB" || areaId === "exitB") {
+        blockBackendExit("EXIT_B", true, category)
+      }
 
       // 2. Dispatch to Firebase RTDB & Firestore
       triggerWebEmergency(targetNodeId, areaId, {
@@ -317,6 +347,12 @@ export default function App() {
       )
     } else {
       soundController.playResetSound()
+      if (areaId === "classA" || areaId === "exitA") {
+        blockBackendExit("EXIT_A", false)
+      } else if (areaId === "classB" || areaId === "exitB") {
+        blockBackendExit("EXIT_B", false)
+      }
+
       addLog(
         `✔ Trigger cleared on ${current.label}. Restored to normal status.`,
         "success",
@@ -370,11 +406,15 @@ export default function App() {
       node: "node003",
       type: "both_exits",
       event_category: category,
+      event_type: category,
       sender_name: "Dual Exit Hub Controller",
       lat: 18.5205,
       lon: 73.8564,
       message: alertMsg,
     })
+
+    blockBackendExit("EXIT_A", true, category)
+    blockBackendExit("EXIT_B", true, category)
 
     triggerWebEmergency("node003", "both_exits", {
       event_category: category,
@@ -444,8 +484,10 @@ export default function App() {
 
     soundController.playResetSound()
 
-    // 1. Reset backend
+    // 1. Reset backend and clear exit blockages
     resetBackendSystem()
+    blockBackendExit("EXIT_A", false)
+    blockBackendExit("EXIT_B", false)
     sendBackendDemoStep(0, "RESET", false)
 
     // 2. Clear Firebase
@@ -465,18 +507,21 @@ export default function App() {
 
     sendBackendEmergency({
       active: true,
-      node: "CAMPUS_WEB",
+      node: "WEB_DASHBOARD",
       type: "sos",
       event_category: "sos",
-      sender_name: "Web Incident Commander",
+      event_type: "sos",
+      sender_name: "Web Command Center",
       lat: 18.5204,
       lon: 73.8567,
       message: alertMsg,
     })
 
-    triggerWebEmergency("CAMPUS_WEB", "sos", {
+    blockBackendExit("EXIT_A", true, "sos")
+
+    triggerWebEmergency("WEB_DASHBOARD", "sos", {
       event_category: "sos",
-      sender_name: "Web Incident Commander",
+      sender_name: "Web Command Center",
       message: alertMsg,
     })
 
@@ -489,6 +534,36 @@ export default function App() {
 
   // ── Real-Time Dual-Sync Subscriptions (SSE + Firebase) ──────────────────────
   useEffect(() => {
+    // 0. Pre-fetch initial backend state immediately (0ms delay)
+    fetchSystemState().then((serverState) => {
+      if (!serverState) return
+      if (serverState.nodes) {
+        setLiveNodes((prev) => ({ ...prev, ...serverState.nodes }))
+        setAreas((prev) => {
+          const next = { ...prev }
+          const n1 = serverState.nodes.node001
+          const n2 = serverState.nodes.node002
+          const n3 = serverState.nodes.node003
+
+          if (n1) {
+            if (n1.temp !== undefined) next.classA = { ...next.classA, temperature: Number(n1.temp) }
+            if (n1.gas !== undefined) next.classA = { ...next.classA, co2Level: Number(n1.gas) }
+          }
+          if (n2) {
+            if (n2.temp !== undefined) next.classB = { ...next.classB, temperature: Number(n2.temp) }
+            if (n2.gas !== undefined) next.classB = { ...next.classB, co2Level: Number(n2.gas) }
+          }
+          if (n3 && n3.peopleInside !== undefined) {
+            next.exitA = { ...next.exitA, occupants: Number(n3.peopleInside) }
+          }
+          return next
+        })
+      }
+      if (serverState.emergency) {
+        setEmergency(serverState.emergency)
+      }
+    })
+
     // 1. Fast 0ms Server-Sent Events (SSE) Stream from FastAPI Backend
     const unsubscribeSSE = subscribeToBackendStream(
       (serverState) => {
@@ -639,35 +714,35 @@ export default function App() {
     }
 
     const steps = [
-      // Step 1: Trigger Class A
+      // Step 1: Trigger Class A (Smoke hazard in Class A -> Exit A blocked, Exit B open)
       () => {
         setAutoplayStep(1)
         sendBackendDemoStep(1, "TRIGGER_CLASS_A", true)
         syncDemoModeToFirebase(true, 1, "Step 1: Smoke Hazard Detected in Class A")
         handleTriggerSpecificArea("classA")
       },
-      // Step 2: Trigger Class B
+      // Step 2: Trigger Class B (Air quality spike in Class B -> Exit B blocked, Exit A open)
       () => {
         setAutoplayStep(2)
         sendBackendDemoStep(2, "TRIGGER_CLASS_B", true)
         syncDemoModeToFirebase(true, 2, "Step 2: Air Quality Spike in Class B Lab")
         handleTriggerSpecificArea("classB")
       },
-      // Step 3: Trigger Exit A
+      // Step 3: Trigger Exit A (South Exit A portal compromised -> Reroute to Exit B)
       () => {
         setAutoplayStep(3)
         sendBackendDemoStep(3, "TRIGGER_EXIT_A", true)
         syncDemoModeToFirebase(true, 3, "Step 3: South Exit A Compromised — Rerouting to Exit B")
         handleTriggerSpecificArea("exitA")
       },
-      // Step 4: Trigger Exit B
+      // Step 4: Trigger Both Exits (North & South portals obstructed -> Both Exits Blocked)
       () => {
         setAutoplayStep(4)
-        sendBackendDemoStep(4, "TRIGGER_EXIT_B", true)
-        syncDemoModeToFirebase(true, 4, "Step 4: North Exit B Portal Obstruction Alert")
-        handleTriggerSpecificArea("exitB")
+        sendBackendDemoStep(4, "TRIGGER_BOTH_EXITS", true)
+        syncDemoModeToFirebase(true, 4, "Step 4: North Exit B Portal Obstruction Alert — Both Exits Blocked")
+        handleTriggerBothExits()
       },
-      // Step 5: Reset All
+      // Step 5: Reset All (Evacuation Clear & All Systems Normalized)
       () => {
         setAutoplayStep(5)
         sendBackendDemoStep(5, "RESET_ALL", false)
@@ -883,88 +958,157 @@ export default function App() {
                 liveNodes["Node 3"] ||
                 {}
 
-              const temp1 = n1.temp ?? areas.classA.temperature ?? 22.4
-              const gas1 = n1.gas ?? areas.classA.co2Level ?? 410
-              const temp2 = n2.temp ?? areas.classB.temperature ?? 21.8
-              const gas2 = n2.gas ?? areas.classB.co2Level ?? 395
-              const motion2 =
-                n2.motion !== undefined
-                  ? n2.motion
-                    ? "MOTION"
-                    : "STABLE"
-                  : n2.accelX !== undefined
-                    ? `${n2.accelX}g`
-                    : "0.02g"
-              const people3 =
-                n3.peopleInside ??
-                areas.classA.occupants + areas.classB.occupants ??
-                42
+              const online1 = isNodeOnline(n1)
+              const online2 = isNodeOnline(n2)
+              const online3 = isNodeOnline(n3)
 
               return (
                 <div
                   style={{
                     display: "flex",
                     flexDirection: "column",
-                    gap: 5,
+                    gap: 6,
                     fontSize: "11px",
                     fontFamily: "monospace",
                   }}
                 >
+                  {/* Node 1 */}
                   <div
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
+                      alignItems: "center",
                       color: "#8ba7b5",
+                      background: online1 ? "rgba(0, 230, 180, 0.05)" : "rgba(255, 23, 68, 0.04)",
+                      padding: "4px 6px",
+                      borderRadius: 4,
+                      border: online1 ? "1px solid rgba(0, 230, 180, 0.2)" : "1px solid rgba(255, 23, 68, 0.15)",
                     }}
                   >
-                    <span>🟢 Node 001 (A)</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ color: online1 ? "#00ffcc" : "#888" }}>
+                        {online1 ? "🟢" : "⚪"} Node 001 (A)
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "9px",
+                          padding: "1px 4px",
+                          borderRadius: 3,
+                          background: online1 ? "rgba(0, 255, 204, 0.15)" : "rgba(255, 23, 68, 0.2)",
+                          color: online1 ? "#00ffcc" : "#ff4d6d",
+                          fontWeight: "bold",
+                        }}
+                      >
+                        {online1 ? "ONLINE" : "DISCONNECTED"}
+                      </span>
+                    </span>
                     <span>
-                      Temp:{" "}
-                      <strong style={{ color: "#fff" }}>
-                        {temp1}°C
-                      </strong>{" "}
-                      | Gas:{" "}
-                      <strong style={{ color: "#fff" }}>
-                        {gas1} ppm
-                      </strong>
+                      {online1 ? (
+                        <>
+                          Temp: <strong style={{ color: "#fff" }}>{n1.temp}°C</strong> | Gas:{" "}
+                          <strong style={{ color: "#fff" }}>{n1.gas} ppm</strong>
+                        </>
+                      ) : (
+                        <span style={{ color: "#667885", fontStyle: "italic" }}>
+                          Temp: -- | Gas: --
+                        </span>
+                      )}
                     </span>
                   </div>
+
+                  {/* Node 2 */}
                   <div
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
+                      alignItems: "center",
                       color: "#8ba7b5",
+                      background: online2 ? "rgba(0, 230, 180, 0.05)" : "rgba(255, 23, 68, 0.04)",
+                      padding: "4px 6px",
+                      borderRadius: 4,
+                      border: online2 ? "1px solid rgba(0, 230, 180, 0.2)" : "1px solid rgba(255, 23, 68, 0.15)",
                     }}
                   >
-                    <span>🔵 Node 002 (B)</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ color: online2 ? "#00ffcc" : "#888" }}>
+                        {online2 ? "🔵" : "⚪"} Node 002 (B)
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "9px",
+                          padding: "1px 4px",
+                          borderRadius: 3,
+                          background: online2 ? "rgba(0, 255, 204, 0.15)" : "rgba(255, 23, 68, 0.2)",
+                          color: online2 ? "#00ffcc" : "#ff4d6d",
+                          fontWeight: "bold",
+                        }}
+                      >
+                        {online2 ? "ONLINE" : "DISCONNECTED"}
+                      </span>
+                    </span>
                     <span>
-                      Temp:{" "}
-                      <strong style={{ color: "#fff" }}>
-                        {temp2}°C
-                      </strong>{" "}
-                      | Gas:{" "}
-                      <strong style={{ color: "#fff" }}>
-                        {gas2} ppm
-                      </strong>{" "}
-                      | Motion:{" "}
-                      <strong style={{ color: "#fff" }}>
-                        {motion2}
-                      </strong>
+                      {online2 ? (
+                        <>
+                          Temp: <strong style={{ color: "#fff" }}>{n2.temp}°C</strong> | Gas:{" "}
+                          <strong style={{ color: "#fff" }}>{n2.gas} ppm</strong>
+                          {n2.motion !== undefined && (
+                            <> | Motion: <strong style={{ color: "#fff" }}>{n2.motion ? "YES" : "NO"}</strong></>
+                          )}
+                          {n2.accelX !== undefined && (
+                            <> | Tilt: <strong style={{ color: "#fff" }}>{n2.accelX}g</strong></>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ color: "#667885", fontStyle: "italic" }}>
+                          Temp: -- | Gas: --
+                        </span>
+                      )}
                     </span>
                   </div>
+
+                  {/* Node 3 */}
                   <div
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
+                      alignItems: "center",
                       color: "#8ba7b5",
+                      background: online3 ? "rgba(0, 230, 180, 0.05)" : "rgba(255, 23, 68, 0.04)",
+                      padding: "4px 6px",
+                      borderRadius: 4,
+                      border: online3 ? "1px solid rgba(0, 230, 180, 0.2)" : "1px solid rgba(255, 23, 68, 0.15)",
                     }}
                   >
-                    <span>🟠 Node 003 (Exits)</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ color: online3 ? "#00ffcc" : "#888" }}>
+                        {online3 ? "🟠" : "⚪"} Node 003 (Exits)
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "9px",
+                          padding: "1px 4px",
+                          borderRadius: 3,
+                          background: online3 ? "rgba(0, 255, 204, 0.15)" : "rgba(255, 23, 68, 0.2)",
+                          color: online3 ? "#00ffcc" : "#ff4d6d",
+                          fontWeight: "bold",
+                        }}
+                      >
+                        {online3 ? "ONLINE" : "DISCONNECTED"}
+                      </span>
+                    </span>
                     <span>
-                      People Inside:{" "}
-                      <strong style={{ color: "#33d19b" }}>
-                        {people3}
-                      </strong>
+                      {online3 ? (
+                        <>
+                          People Inside:{" "}
+                          <strong style={{ color: "#33d19b" }}>
+                            {n3.peopleInside ?? 0}
+                          </strong>
+                        </>
+                      ) : (
+                        <span style={{ color: "#667885", fontStyle: "italic" }}>
+                          People: -- (No Signal)
+                        </span>
+                      )}
                     </span>
                   </div>
                 </div>

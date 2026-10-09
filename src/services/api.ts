@@ -47,12 +47,14 @@ export async function sendBackendEmergency(payload: {
   node?: string
   type?: string
   event_category?: string
+  event_type?: string
   sender_name?: string
   lat?: number
   lon?: number
   message?: string
 }) {
   try {
+    const category = payload.event_category || payload.event_type || "smoke"
     const res = await fetch(`${BACKEND_URL}/api/emergency`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -60,7 +62,8 @@ export async function sendBackendEmergency(payload: {
         active: payload.active ?? true,
         node: payload.node || "WEB_DASHBOARD",
         type: payload.type || "sos",
-        event_category: payload.event_category || "smoke",
+        event_category: category,
+        event_type: category,
         timestamp: Date.now() / 1000,
         sender_name: payload.sender_name || "ResQMesh Web Command Center",
         lat: payload.lat ?? 18.5204,

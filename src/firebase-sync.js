@@ -12,7 +12,7 @@ import {
 const firebaseConfig = {
   apiKey: "AIzaSyCwU93VpmYydhM1zhrvCD7pFomkEFgeRVQ",
   authDomain: "resq-hardware.firebaseapp.com",
-  databaseURL: "https://resq-hardware-default-rtdb.firebaseio.com",
+  databaseURL: "https://resq-hardware-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "resq-hardware",
   storageBucket: "resq-hardware.firebasestorage.app",
   messagingSenderId: "326136146045",
@@ -20,7 +20,7 @@ const firebaseConfig = {
 }
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp()
-export const rtdb = getDatabase(app)
+export const rtdb = getDatabase(app, "https://resq-hardware-default-rtdb.asia-southeast1.firebasedatabase.app")
 export const firestore = getFirestore(app)
 export const db = rtdb // Alias for backwards-compatibility
 

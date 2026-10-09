@@ -28,11 +28,13 @@ ws_clients: List[WebSocket] = []
 
 
 # ── Global System State (Unified Schema) ──────────────────────────────────────
+# ── Global System State (Unified Schema) ──────────────────────────────────────
 system_state: Dict[str, Any] = {
     "system_status": "NOMINAL",  # "NOMINAL" or "EMERGENCY_ACTIVE"
     "demo_mode": {
         "active": False,
         "current_step": 0,
+        "step": 0,
         "description": "Nominal Monitoring"
     },
     "nodes": {
@@ -86,11 +88,27 @@ system_state: Dict[str, Any] = {
         "node": None,
         "type": None,
         "event_category": None,  # "smoke", "sos", "co2", "intrusion", "drill"
+        "event_type": None,
         "timestamp": None,
         "sender_name": None,
         "lat": 18.5204,
         "lon": 73.8567,
         "message": "All sectors safe and nominal."
+    },
+    "sos": [],
+    "campus": {
+        "exits": {
+            "EXIT_A": {
+                "name": "Exit A (South)",
+                "blocked": False,
+                "hazard_type": None
+            },
+            "EXIT_B": {
+                "name": "Exit B (North)",
+                "blocked": False,
+                "hazard_type": None
+            }
+        }
     },
     "last_ai_result": {
         "has_active_emergency": False,
@@ -114,8 +132,25 @@ system_state: Dict[str, Any] = {
 }
 
 
+# ── Dynamic Node Connectivity Refresh ──────────────────────────────────────────
+def refresh_node_connectivity():
+    now = time.time()
+    for nid, node in system_state["nodes"].items():
+        last_seen = node.get("last_seen")
+        # Mark as disconnected if no packet received in last 90 seconds
+        if not last_seen or (now - float(last_seen)) > 90:
+            node["status"] = "disconnected"
+        else:
+            node["status"] = "online"
+
+
 # ── Broadcast State Update to SSE and WebSocket Clients ────────────────────────
 async def broadcast_state_change():
+    refresh_node_connectivity()
+    # Keep campus and demo_mode properties synchronized for all mobile & web clients
+    system_state["campus"] = {"exits": system_state["exits"]}
+    system_state["demo_mode"]["step"] = system_state["demo_mode"]["current_step"]
+
     payload = json.dumps(system_state)
     
     # 1. SSE Queues
@@ -152,6 +187,7 @@ class EmergencyEvent(BaseModel):
     node: str = "WEB_DASHBOARD"
     type: str = "sos"  # "class_a", "class_b", "exit_a", "exit_b", "both_exits", "sos"
     event_category: Optional[str] = "smoke"  # "smoke", "sos", "co2", "intrusion", "drill"
+    event_type: Optional[str] = None
     timestamp: Optional[float] = None
     sender_name: Optional[str] = "Web Command Center"
     lat: Optional[float] = 18.5204
@@ -277,6 +313,7 @@ def health():
 
 @app.get("/api/state")
 def get_state():
+    refresh_node_connectivity()
     return system_state
 
 
@@ -344,14 +381,16 @@ async def websocket_endpoint(websocket: WebSocket):
 # ── 1. Telemetry Ingestion ────────────────────────────────────────────────────
 @app.post("/api/telemetry")
 async def update_telemetry(payload: TelemetryUpdate):
-    nid = payload.node_id.lower().replace("-", "").replace(" ", "")
+    raw_nid = payload.node_id.lower().replace("-", "").replace(" ", "").replace("_", "")
     # Normalize ID to node001, node002, node003
-    if nid in ["node1", "1"]:
+    if raw_nid in ["node1", "1", "node01", "classa"]:
         nid = "node001"
-    elif nid in ["node2", "2"]:
+    elif raw_nid in ["node2", "2", "node02", "classb"]:
         nid = "node002"
-    elif nid in ["node3", "3"]:
+    elif raw_nid in ["node3", "3", "node03", "exits", "exita", "exitb", "hub"]:
         nid = "node003"
+    else:
+        nid = raw_nid
 
     if nid not in system_state["nodes"]:
         system_state["nodes"][nid] = {
@@ -381,6 +420,44 @@ async def update_telemetry(payload: TelemetryUpdate):
         node["battery"] = payload.battery
     node["last_seen"] = time.time()
 
+    # Intelligent sensor threshold hazard detection
+    if (payload.temp is not None and payload.temp >= 45.0) or (payload.gas is not None and payload.gas >= 800):
+        system_state["system_status"] = "EMERGENCY_ACTIVE"
+        hazard_cat = "smoke" if (payload.temp is not None and payload.temp >= 45.0) else "co2"
+        if nid == "node001":
+            system_state["exits"]["EXIT_A"]["blocked"] = True
+            system_state["exits"]["EXIT_A"]["hazard_type"] = hazard_cat
+            system_state["emergency"] = {
+                "active": True,
+                "node": "node001",
+                "type": "class_a",
+                "event_category": hazard_cat,
+                "event_type": hazard_cat,
+                "timestamp": time.time(),
+                "sender_name": "Class A Sentinel (Node 1)",
+                "lat": 18.5204,
+                "lon": 73.8567,
+                "message": f"🔥 Telemetry Threshold Exceeded in Class A (Temp: {node.get('temp')}°C, Gas: {node.get('gas')} ppm)"
+            }
+            system_state["sos"] = [system_state["emergency"]]
+        elif nid == "node002":
+            system_state["exits"]["EXIT_B"]["blocked"] = True
+            system_state["exits"]["EXIT_B"]["hazard_type"] = hazard_cat
+            system_state["emergency"] = {
+                "active": True,
+                "node": "node002",
+                "type": "class_b",
+                "event_category": hazard_cat,
+                "event_type": hazard_cat,
+                "timestamp": time.time(),
+                "sender_name": "Class B Sentinel (Node 2)",
+                "lat": 18.5208,
+                "lon": 73.8572,
+                "message": f"☣️ Telemetry Threshold Exceeded in Class B (Gas: {node.get('gas')} ppm)"
+            }
+            system_state["sos"] = [system_state["emergency"]]
+        recalculate_ai_risk()
+
     await broadcast_state_change()
     return {"ok": True, "node": node, "system_status": system_state["system_status"]}
 
@@ -388,7 +465,7 @@ async def update_telemetry(payload: TelemetryUpdate):
 # ── 2. Emergency Trigger / SOS Dispatch ───────────────────────────────────────
 @app.post("/api/emergency")
 async def set_emergency(event: EmergencyEvent):
-    category = event.event_category or "smoke"
+    category = event.event_category or event.event_type or "smoke"
     node_id = event.node or "node001"
     evt_type = (event.type or "sos").lower()
 
@@ -398,8 +475,9 @@ async def set_emergency(event: EmergencyEvent):
         "node": node_id,
         "type": evt_type,
         "event_category": category,
+        "event_type": category,
         "timestamp": event.timestamp or time.time(),
-        "sender_name": event.sender_name or "Command Center",
+        "sender_name": event.sender_name or "Web Command Center",
         "lat": event.lat or 18.5204,
         "lon": event.lon or 73.8567,
         "message": event.message or f"🚨 {category.upper()} alert triggered by {node_id}"
@@ -407,14 +485,24 @@ async def set_emergency(event: EmergencyEvent):
 
     # Apply Mandatory Exit Blockage Rules based on trigger origin
     if event.active:
-        if "class_a" in evt_type or "node001" in node_id.lower() or "1" in node_id:
+        system_state["sos"] = [{
+            "node": node_id,
+            "type": evt_type,
+            "event_category": category,
+            "event_type": category,
+            "timestamp": system_state["emergency"]["timestamp"],
+            "sender_name": system_state["emergency"]["sender_name"],
+            "message": system_state["emergency"]["message"]
+        }]
+
+        if "class_a" in evt_type or "node001" in node_id.lower() or "1" in node_id or "exit_a" in evt_type:
             system_state["exits"]["EXIT_A"]["blocked"] = True
             system_state["exits"]["EXIT_A"]["hazard_type"] = category
             # Elevate Class A sensors
             system_state["nodes"]["node001"]["temp"] = max(system_state["nodes"]["node001"].get("temp", 22), 48.5)
             system_state["nodes"]["node001"]["gas"] = max(system_state["nodes"]["node001"].get("gas", 400), 920)
 
-        elif "class_b" in evt_type or "node002" in node_id.lower() or "2" in node_id:
+        elif "class_b" in evt_type or "node002" in node_id.lower() or "2" in node_id or "exit_b" in evt_type:
             system_state["exits"]["EXIT_B"]["blocked"] = True
             system_state["exits"]["EXIT_B"]["hazard_type"] = category
             # Elevate Class B sensors
@@ -426,8 +514,16 @@ async def set_emergency(event: EmergencyEvent):
             system_state["exits"]["EXIT_A"]["hazard_type"] = category
             system_state["exits"]["EXIT_B"]["blocked"] = True
             system_state["exits"]["EXIT_B"]["hazard_type"] = category
+
+        elif "sos" in evt_type:
+            # Web SOS / Emergency SOS: Sets Class A hazard and compromises Exit A
+            system_state["exits"]["EXIT_A"]["blocked"] = True
+            system_state["exits"]["EXIT_A"]["hazard_type"] = "sos"
+            system_state["nodes"]["node001"]["temp"] = max(system_state["nodes"]["node001"].get("temp", 22), 48.2)
+            system_state["nodes"]["node001"]["gas"] = max(system_state["nodes"]["node001"].get("gas", 400), 910)
     else:
         # If cleared
+        system_state["sos"] = []
         system_state["exits"]["EXIT_A"]["blocked"] = False
         system_state["exits"]["EXIT_A"]["hazard_type"] = None
         system_state["exits"]["EXIT_B"]["blocked"] = False
@@ -441,7 +537,8 @@ async def set_emergency(event: EmergencyEvent):
         "system_status": system_state["system_status"],
         "emergency": system_state["emergency"],
         "exits": system_state["exits"],
-        "last_ai_result": system_state["last_ai_result"]
+        "last_ai_result": system_state["last_ai_result"],
+        "sos": system_state["sos"]
     }
 
 
@@ -453,23 +550,36 @@ async def handle_demo_progression(req: DemoStepRequest):
 
     step_descriptions = {
         0: "Nominal Baseline Monitoring",
-        1: "Step 1: Smoke Hazard Detected in Class A (Node 1)",
-        2: "Step 2: Air Quality Spike in Class B Lab (Node 2)",
+        1: "Step 1: Smoke Hazard Detected in Class A (Node 1) — Exit A Blocked",
+        2: "Step 2: Air Quality Spike in Class B Lab (Node 2) — Exit B Blocked",
         3: "Step 3: South Exit A Compromised — Rerouting to Exit B",
-        4: "Step 4: North Exit B Portal Obstruction Alert",
+        4: "Step 4: North Exit B Portal Obstruction Alert — Both Exits Blocked",
         5: "Step 5: Evacuation Clear & All Systems Normalized"
     }
 
     system_state["demo_mode"] = {
         "active": is_active,
         "current_step": step,
+        "step": step,
         "description": step_descriptions.get(step, f"Demo Step {step}")
     }
 
     if not is_active or step == 0 or step == 5:
         # Reset to safe nominal
         system_state["system_status"] = "NOMINAL"
-        system_state["emergency"]["active"] = False
+        system_state["emergency"] = {
+            "active": False,
+            "node": None,
+            "type": None,
+            "event_category": None,
+            "event_type": None,
+            "timestamp": None,
+            "sender_name": None,
+            "lat": 18.5204,
+            "lon": 73.8567,
+            "message": "All sectors safe and nominal."
+        }
+        system_state["sos"] = []
         system_state["exits"]["EXIT_A"]["blocked"] = False
         system_state["exits"]["EXIT_A"]["hazard_type"] = None
         system_state["exits"]["EXIT_B"]["blocked"] = False
@@ -478,72 +588,91 @@ async def handle_demo_progression(req: DemoStepRequest):
         system_state["nodes"]["node001"]["gas"] = 410
         system_state["nodes"]["node002"]["temp"] = 21.8
         system_state["nodes"]["node002"]["gas"] = 395
+        system_state["nodes"]["node003"]["peopleInside"] = 42
+
     elif step == 1:
-        # Trigger Class A
+        # Step 1: Trigger Class A (Smoke) -> Exit A blocked, Exit B open
         system_state["system_status"] = "EMERGENCY_ACTIVE"
         system_state["emergency"] = {
             "active": True,
             "node": "node001",
             "type": "class_a",
             "event_category": "smoke",
+            "event_type": "smoke",
             "timestamp": time.time(),
             "sender_name": "Class A Sentinel (Node 1)",
             "lat": 18.5204,
             "lon": 73.8567,
             "message": "🔥 Smoke Alarm Triggered in West Wing Class A"
         }
+        system_state["sos"] = [system_state["emergency"]]
         system_state["exits"]["EXIT_A"]["blocked"] = True
         system_state["exits"]["EXIT_A"]["hazard_type"] = "smoke"
+        system_state["exits"]["EXIT_B"]["blocked"] = False
+        system_state["exits"]["EXIT_B"]["hazard_type"] = None
         system_state["nodes"]["node001"]["temp"] = 48.2
         system_state["nodes"]["node001"]["gas"] = 890
+
     elif step == 2:
-        # Trigger Class B
+        # Step 2: Trigger Class B (CO2) -> Exit B blocked, Exit A open
         system_state["system_status"] = "EMERGENCY_ACTIVE"
         system_state["emergency"] = {
             "active": True,
             "node": "node002",
             "type": "class_b",
             "event_category": "co2",
+            "event_type": "co2",
             "timestamp": time.time(),
             "sender_name": "Class B Sentinel (Node 2)",
             "lat": 18.5208,
             "lon": 73.8572,
             "message": "☣️ CO2 Air Hazard Spike in East Wing Lab"
         }
+        system_state["sos"] = [system_state["emergency"]]
+        system_state["exits"]["EXIT_A"]["blocked"] = False
+        system_state["exits"]["EXIT_A"]["hazard_type"] = None
         system_state["exits"]["EXIT_B"]["blocked"] = True
         system_state["exits"]["EXIT_B"]["hazard_type"] = "co2"
         system_state["nodes"]["node002"]["temp"] = 44.5
         system_state["nodes"]["node002"]["gas"] = 1150
+
     elif step == 3:
-        # Exit A Hazard
+        # Step 3: Exit A Hazard -> Exit A blocked, Exit B open
         system_state["system_status"] = "EMERGENCY_ACTIVE"
         system_state["emergency"] = {
             "active": True,
             "node": "node003",
             "type": "exit_a",
             "event_category": "sos",
+            "event_type": "sos",
             "timestamp": time.time(),
             "sender_name": "Dual Exit Controller (Node 3)",
             "lat": 18.5201,
             "lon": 73.8562,
             "message": "⚠️ South Emergency Portal (Exit A) Blocked"
         }
+        system_state["sos"] = [system_state["emergency"]]
         system_state["exits"]["EXIT_A"]["blocked"] = True
         system_state["exits"]["EXIT_A"]["hazard_type"] = "sos"
+        system_state["exits"]["EXIT_B"]["blocked"] = False
+        system_state["exits"]["EXIT_B"]["hazard_type"] = None
+
     elif step == 4:
-        # Both Exits Hazard
+        # Step 4: Both Exits Blocked -> Dual Corridor Congestion
         system_state["system_status"] = "EMERGENCY_ACTIVE"
         system_state["emergency"] = {
             "active": True,
             "node": "node003",
             "type": "both_exits",
             "event_category": "drill",
+            "event_type": "drill",
             "timestamp": time.time(),
             "sender_name": "Dual Exit Controller (Node 3)",
             "lat": 18.5209,
             "lon": 73.8565,
-            "message": "🚨 Dual Exit Alert — Evacuation Corridor Congestion"
+            "message": "🚨 Dual Exit Alert — Evacuation Corridors Congested"
         }
+        system_state["sos"] = [system_state["emergency"]]
         system_state["exits"]["EXIT_A"]["blocked"] = True
         system_state["exits"]["EXIT_A"]["hazard_type"] = "drill"
         system_state["exits"]["EXIT_B"]["blocked"] = True
@@ -558,7 +687,8 @@ async def handle_demo_progression(req: DemoStepRequest):
         "system_status": system_state["system_status"],
         "emergency": system_state["emergency"],
         "exits": system_state["exits"],
-        "last_ai_result": system_state["last_ai_result"]
+        "last_ai_result": system_state["last_ai_result"],
+        "sos": system_state["sos"]
     }
 
 
@@ -570,6 +700,7 @@ async def reset_system():
     system_state["demo_mode"] = {
         "active": False,
         "current_step": 0,
+        "step": 0,
         "description": "Nominal Baseline Monitoring"
     }
     system_state["emergency"] = {
@@ -577,12 +708,14 @@ async def reset_system():
         "node": None,
         "type": None,
         "event_category": None,
+        "event_type": None,
         "timestamp": None,
         "sender_name": None,
         "lat": 18.5204,
         "lon": 73.8567,
         "message": "All sectors safe and nominal."
     }
+    system_state["sos"] = []
     system_state["exits"]["EXIT_A"]["blocked"] = False
     system_state["exits"]["EXIT_A"]["hazard_type"] = None
     system_state["exits"]["EXIT_B"]["blocked"] = False
@@ -616,6 +749,24 @@ async def block_exit(req: BlockExitRequest):
     if key in system_state["exits"]:
         system_state["exits"][key]["blocked"] = req.blocked
         system_state["exits"][key]["hazard_type"] = req.hazard_type if req.blocked else None
+
+        # If any exit is blocked, activate emergency status if not already
+        any_blocked = system_state["exits"]["EXIT_A"]["blocked"] or system_state["exits"]["EXIT_B"]["blocked"]
+        if any_blocked:
+            system_state["system_status"] = "EMERGENCY_ACTIVE"
+            system_state["emergency"]["active"] = True
+            system_state["emergency"]["type"] = key.lower()
+            system_state["emergency"]["event_category"] = req.hazard_type or "smoke"
+            system_state["emergency"]["event_type"] = req.hazard_type or "smoke"
+            system_state["emergency"]["node"] = "node003"
+            system_state["emergency"]["message"] = f"⚠️ {system_state['exits'][key]['name']} is BLOCKED"
+            system_state["sos"] = [system_state["emergency"]]
+        else:
+            if not system_state["demo_mode"]["active"]:
+                system_state["system_status"] = "NOMINAL"
+                system_state["emergency"]["active"] = False
+                system_state["sos"] = []
+
         recalculate_ai_risk()
         await broadcast_state_change()
         return {"ok": True, "exit": system_state["exits"][key], "last_ai_result": system_state["last_ai_result"]}
