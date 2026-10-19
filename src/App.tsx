@@ -623,25 +623,61 @@ export default function App() {
           "error",
         )
         const nodeStr = (data.node || "").toLowerCase()
-        if (
-          nodeStr.includes("node001") ||
-          nodeStr.includes("node 1") ||
-          nodeStr.includes("classa")
-        ) {
-          handleTriggerSpecificArea("classA")
-        } else if (
-          nodeStr.includes("node002") ||
-          nodeStr.includes("node 2") ||
-          nodeStr.includes("classb")
-        ) {
-          handleTriggerSpecificArea("classB")
-        } else if (
-          nodeStr.includes("node003") ||
-          nodeStr.includes("node 3") ||
-          nodeStr.includes("exit")
-        ) {
-          handleTriggerBothExits()
-        }
+        const targetCategory: TriggerType =
+          data.event_category === "fire" || data.event_category === "smoke"
+            ? "fire"
+            : data.event_category === "co2"
+              ? "co2"
+              : data.event_category === "intrusion"
+                ? "intrusion"
+                : "fire"
+
+        setAreas((prev) => {
+          const next = { ...prev }
+          if (
+            nodeStr.includes("node001") ||
+            nodeStr.includes("node 1") ||
+            nodeStr.includes("classa")
+          ) {
+            next.classA = {
+              ...next.classA,
+              isTriggered: true,
+              triggerType: targetCategory,
+              temperature: 48.5,
+              co2Level: 1250,
+            }
+          } else if (
+            nodeStr.includes("node002") ||
+            nodeStr.includes("node 2") ||
+            nodeStr.includes("classb")
+          ) {
+            next.classB = {
+              ...next.classB,
+              isTriggered: true,
+              triggerType: targetCategory,
+              temperature: 46.0,
+              co2Level: 1100,
+            }
+          } else if (
+            nodeStr.includes("node003") ||
+            nodeStr.includes("node 3") ||
+            nodeStr.includes("exit")
+          ) {
+            next.exitA = { ...next.exitA, isTriggered: true, triggerType: targetCategory }
+            next.exitB = { ...next.exitB, isTriggered: true, triggerType: targetCategory }
+          }
+          return next
+        })
+      } else {
+        // Emergency cleared externally
+        setAreas((prev) => {
+          const next = { ...prev }
+          next.classA = { ...next.classA, isTriggered: false }
+          next.classB = { ...next.classB, isTriggered: false }
+          next.exitA = { ...next.exitA, isTriggered: false }
+          next.exitB = { ...next.exitB, isTriggered: false }
+          return next
+        })
       }
     })
 
