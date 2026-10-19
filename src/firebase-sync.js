@@ -8,19 +8,20 @@ import {
   setDoc,
 } from "firebase/firestore"
 
-// Pre-configured for project: pheonixnet
+// Configuration loaded dynamically from environment variables
 const firebaseConfig = {
-  apiKey: "AIzaSyAAcGp_85cVD6de066_UptkaOflTrhfj2c",
-  authDomain: "pheonixnet.firebaseapp.com",
-  databaseURL: "https://pheonixnet-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "pheonixnet",
-  storageBucket: "pheonixnet.firebasestorage.app",
-  messagingSenderId: "899855227001",
-  appId: "1:899855227001:web:339c42bfcc9b90f3a8a914",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyAAcGp_85cVD6de066_UptkaOflTrhfj2c",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "pheonixnet.firebaseapp.com",
+  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL || "https://pheonixnet-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "pheonixnet",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "pheonixnet.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "899855227001",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:899855227001:web:339c42bfcc9b90f3a8a914",
 }
 
+const targetRtdbUrl = firebaseConfig.databaseURL
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp()
-export const rtdb = getDatabase(app, "https://pheonixnet-default-rtdb.asia-southeast1.firebasedatabase.app")
+export const rtdb = getDatabase(app, targetRtdbUrl)
 export const firestore = getFirestore(app)
 export const db = rtdb // Alias for backwards-compatibility
 

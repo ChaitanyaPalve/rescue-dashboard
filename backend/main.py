@@ -13,12 +13,26 @@ app = FastAPI(
     version="2.1.0"
 )
 
-# Enable CORS for Vercel, localhost, and mobile clients
+import os
+
+# Configurable CORS origins via environment variables (falls back to dashboard domains)
+allowed_origins_env = os.getenv("CORS_ORIGINS", "")
+if allowed_origins_env.strip():
+    allowed_origins = [orig.strip() for orig in allowed_origins_env.split(",") if orig.strip()]
+else:
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://resq-dashboard-ten.vercel.app",
+        "https://resq-dashboard.vercel.app",
+        "*"
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=allowed_origins,
+    allow_credentials=True if "*" not in allowed_origins else False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -171,41 +185,41 @@ async def broadcast_state_change():
 
 # ── Request / Response Models ──────────────────────────────────────────────────
 class TelemetryUpdate(BaseModel):
-    node_id: Optional[str] = None
-    id: Optional[str] = None
-    temp: Optional[float] = None
-    gas: Optional[float] = None
-    accelX: Optional[float] = None
+    node_id: Optional[str] = Field(default=None, max_length=64)
+    id: Optional[str] = Field(default=None, max_length=64)
+    temp: Optional[float] = Field(default=None, ge=-50.0, le=150.0)
+    gas: Optional[float] = Field(default=None, ge=0.0, le=50000.0)
+    accelX: Optional[float] = Field(default=None, ge=-100.0, le=100.0)
     motion: Optional[bool] = None
-    peopleInside: Optional[int] = None
-    battery: Optional[int] = None
-    lat: Optional[float] = None
-    lon: Optional[float] = None
+    peopleInside: Optional[int] = Field(default=None, ge=0, le=5000)
+    battery: Optional[int] = Field(default=None, ge=0, le=100)
+    lat: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    lon: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
 
 
 class EmergencyEvent(BaseModel):
     active: bool = True
-    node: str = "WEB_DASHBOARD"
-    type: str = "sos"  # "class_a", "class_b", "exit_a", "exit_b", "both_exits", "sos"
-    event_category: Optional[str] = "smoke"  # "smoke", "sos", "co2", "intrusion", "drill"
-    event_type: Optional[str] = None
+    node: str = Field(default="WEB_DASHBOARD", max_length=64)
+    type: str = Field(default="sos", max_length=64)
+    event_category: Optional[str] = Field(default="smoke", max_length=64)
+    event_type: Optional[str] = Field(default=None, max_length=64)
     timestamp: Optional[float] = None
-    sender_name: Optional[str] = "Web Command Center"
-    lat: Optional[float] = 18.5204
-    lon: Optional[float] = 73.8567
-    message: Optional[str] = None
+    sender_name: Optional[str] = Field(default="Web Command Center", max_length=128)
+    lat: Optional[float] = Field(default=18.5204, ge=-90.0, le=90.0)
+    lon: Optional[float] = Field(default=73.8567, ge=-180.0, le=180.0)
+    message: Optional[str] = Field(default=None, max_length=512)
 
 
 class DemoStepRequest(BaseModel):
     active: bool = True
-    step: int = 1
-    action: Optional[str] = "TRIGGER_CLASS_A"
+    step: int = Field(default=1, ge=0, le=10)
+    action: Optional[str] = Field(default="TRIGGER_CLASS_A", max_length=64)
 
 
 class BlockExitRequest(BaseModel):
-    exit: str
+    exit: str = Field(max_length=32)
     blocked: bool
-    hazard_type: Optional[str] = None
+    hazard_type: Optional[str] = Field(default=None, max_length=64)
 
 
 class AnalyzeRequest(BaseModel):
