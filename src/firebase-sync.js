@@ -8,19 +8,19 @@ import {
   setDoc,
 } from "firebase/firestore"
 
-// Pre-configured for project: resq-hardware
+// Pre-configured for project: pheonixnet
 const firebaseConfig = {
-  apiKey: "AIzaSyCwU93VpmYydhM1zhrvCD7pFomkEFgeRVQ",
-  authDomain: "resq-hardware.firebaseapp.com",
-  databaseURL: "https://resq-hardware-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "resq-hardware",
-  storageBucket: "resq-hardware.firebasestorage.app",
-  messagingSenderId: "326136146045",
-  appId: "1:326136146045:web:339c42bfcc9b90f3a8a914",
+  apiKey: "AIzaSyAAcGp_85cVD6de066_UptkaOflTrhfj2c",
+  authDomain: "pheonixnet.firebaseapp.com",
+  databaseURL: "https://pheonixnet-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "pheonixnet",
+  storageBucket: "pheonixnet.firebasestorage.app",
+  messagingSenderId: "899855227001",
+  appId: "1:899855227001:web:339c42bfcc9b90f3a8a914",
 }
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp()
-export const rtdb = getDatabase(app, "https://resq-hardware-default-rtdb.asia-southeast1.firebasedatabase.app")
+export const rtdb = getDatabase(app, "https://pheonixnet-default-rtdb.asia-southeast1.firebasedatabase.app")
 export const firestore = getFirestore(app)
 export const db = rtdb // Alias for backwards-compatibility
 
